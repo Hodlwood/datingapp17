@@ -45,9 +45,11 @@ interface Message {
 }
 
 interface RejectedProfile {
+  id: string;
   userId: string;
   rejectedProfileId: string;
   rejectedAt: any;
+  expiresAt: any;
 }
 
 const nationalities = [
@@ -278,27 +280,35 @@ export default function DiscoveryPage() {
       
       try {
         const rejectedRef = collection(db, 'rejectedProfiles');
-        const sixMonthsAgo = new Date();
-        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+        const now = new Date();
         
+        // First try to get all rejected profiles for the user
         const q = query(
           rejectedRef,
-          where('userId', '==', user.uid),
-          where('rejectedAt', '>=', sixMonthsAgo)
+          where('userId', '==', user.uid)
         );
         
         const querySnapshot = await getDocs(q);
-        const rejected = querySnapshot.docs.map(doc => ({
-          id: doc.id,
-          userId: doc.data().userId,
-          rejectedProfileId: doc.data().rejectedProfileId,
-          rejectedAt: doc.data().rejectedAt
-        })) as RejectedProfile[];
+        const rejected = querySnapshot.docs
+          .map(doc => ({
+            id: doc.id,
+            userId: doc.data().userId,
+            rejectedProfileId: doc.data().rejectedProfileId,
+            rejectedAt: doc.data().rejectedAt,
+            expiresAt: doc.data().expiresAt
+          }))
+          .filter(profile => {
+            // Filter out expired rejections in memory
+            const expiresAt = profile.expiresAt?.toDate();
+            return expiresAt && expiresAt > now;
+          }) as RejectedProfile[];
         
-        console.log('Loaded rejected profiles:', rejected.length);
+        console.log('Loaded active rejected profiles:', rejected.length);
         setRejectedProfiles(rejected);
       } catch (err) {
         console.error('Error loading rejected profiles:', err);
+        // If there's an error, set an empty array to prevent blocking the app
+        setRejectedProfiles([]);
       }
     };
     loadRejectedProfiles();
@@ -312,14 +322,6 @@ export default function DiscoveryPage() {
         setLoadingProfiles(true);
         setError(null);
 
-        // Get the user's gender preference from localStorage
-        const selectedGender = localStorage.getItem('selectedGender');
-        console.log('Selected gender from localStorage:', selectedGender);
-        if (!selectedGender) {
-          setError('Please select a gender preference first');
-          return;
-        }
-
         // Get rejected profile IDs
         const rejectedProfileIds = rejectedProfiles.map(profile => profile.rejectedProfileId);
         console.log('Rejected profile IDs:', rejectedProfileIds);
@@ -328,18 +330,16 @@ export default function DiscoveryPage() {
         const showGender = userProfile.gender === 'male' ? 'female' : 'male';
         console.log('User gender:', userProfile.gender, 'Showing profiles for:', showGender);
 
-        // Query users collection for profiles that match the opposite gender and are in discovery
+        // Query users collection for profiles that match the opposite gender
         const usersRef = collection(db, 'users');
         const q = query(
           usersRef,
           where('gender', '==', showGender),
-          where('inDiscovery', '==', true),
           where('onboardingCompleted', '==', true)
         );
 
         console.log('Querying for profiles with conditions:', {
           gender: showGender,
-          inDiscovery: true,
           onboardingCompleted: true
         });
 
@@ -350,7 +350,13 @@ export default function DiscoveryPage() {
 
         querySnapshot.forEach((doc) => {
           const data = doc.data();
-          console.log('Profile data:', { id: doc.id, gender: data.gender, inDiscovery: data.inDiscovery, onboardingCompleted: data.onboardingCompleted });
+          console.log('Profile data:', { 
+            id: doc.id, 
+            gender: data.gender, 
+            onboardingCompleted: data.onboardingCompleted,
+            name: data.name 
+          });
+          
           // Skip the current user's profile and rejected profiles
           if (doc.id !== user.uid && !rejectedProfileIds.includes(doc.id)) {
             loadedProfiles.push({
@@ -413,22 +419,20 @@ export default function DiscoveryPage() {
     if (!user || !currentProfile) return;
     
     try {
-      // Store rejection in Firebase with timestamp
+      // Calculate expiration date (6 months from now)
+      const sixMonthsFromNow = new Date();
+      sixMonthsFromNow.setMonth(sixMonthsFromNow.getMonth() + 6);
+      
+      // Store rejection in Firebase with timestamp and expiration
       const rejectedRef = collection(db, 'rejectedProfiles');
       await addDoc(rejectedRef, {
         userId: user.uid,
         rejectedProfileId: currentProfile.id,
-        rejectedAt: serverTimestamp()
+        rejectedAt: serverTimestamp(),
+        expiresAt: sixMonthsFromNow
       });
 
-      // Remove the profile from discovery rotation
-      const userRef = doc(db, 'users', currentProfile.id);
-      await updateDoc(userRef, {
-        inDiscovery: false,
-        removedFromDiscoveryAt: serverTimestamp()
-      });
-
-      console.log('Stored rejection and removed profile from discovery:', currentProfile.id);
+      console.log('Stored rejection with 6-month expiration:', currentProfile.id);
 
       // Set the overlay and direction for the animation
       setDirection(-1);
