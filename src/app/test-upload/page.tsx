@@ -2,53 +2,42 @@
 
 import { useState } from 'react';
 import { useAuth } from '@/lib/hooks/useAuth';
-import { storage } from '@/lib/firebase/firebase';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import Image from 'next/image';
+import { useImageUpload } from '@/lib/hooks/useImageUpload';
 
 export default function TestUploadPage() {
-  const [uploading, setUploading] = useState(false);
-  const [error, setError] = useState('');
   const [previewUrl, setPreviewUrl] = useState('');
   const [uploadedUrl, setUploadedUrl] = useState('');
   const { user } = useAuth();
+  
+  const { 
+    uploadImage, 
+    isUploading, 
+    error, 
+    progress, 
+    reset 
+  } = useImageUpload({
+    onSuccess: (url) => {
+      console.log('Upload successful, download URL:', url);
+      setUploadedUrl(url);
+    },
+    onError: (err) => {
+      console.error('Upload error:', err);
+    },
+    onProgress: (p) => {
+      console.log('Upload progress:', p);
+    }
+  });
 
   const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file || !user) return;
 
-    try {
-      setUploading(true);
-      setError('');
-      setPreviewUrl(URL.createObjectURL(file));
-
-      // Create a unique filename
-      const timestamp = Date.now();
-      const filename = `${timestamp}_${file.name.replace(/[^a-zA-Z0-9.]/g, '_')}`;
-      const path = `test-uploads/${user.uid}/${filename}`;
-
-      // Get a reference to the file location
-      const storageRef = ref(storage, path);
-
-      // Upload the file
-      console.log('Uploading to Firebase Storage...');
-      const snapshot = await uploadBytes(storageRef, file, {
-        contentType: file.type,
-        customMetadata: {
-          uploadedBy: user.uid,
-        },
-      });
-
-      // Get the download URL
-      const downloadURL = await getDownloadURL(snapshot.ref);
-      console.log('Upload successful, download URL:', downloadURL);
-      setUploadedUrl(downloadURL);
-    } catch (err: any) {
-      console.error('Upload error:', err);
-      setError(err.message || 'Failed to upload photo');
-    } finally {
-      setUploading(false);
-    }
+    // Create preview URL
+    setPreviewUrl(URL.createObjectURL(file));
+    
+    // Upload the file
+    await uploadImage(file);
   };
 
   return (
@@ -65,7 +54,7 @@ export default function TestUploadPage() {
               type="file"
               accept="image/*"
               onChange={handleFileChange}
-              disabled={uploading}
+              disabled={isUploading}
               className="block w-full text-sm text-gray-500
                 file:mr-4 file:py-2 file:px-4
                 file:rounded-full file:border-0
@@ -81,9 +70,12 @@ export default function TestUploadPage() {
             </div>
           )}
 
-          {uploading && (
+          {isUploading && (
             <div className="mb-4">
               <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-blue-500"></div>
+              <div className="mt-2 text-sm text-gray-600">
+                Uploading: {Math.round(progress)}%
+              </div>
             </div>
           )}
 

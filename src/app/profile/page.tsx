@@ -4,13 +4,14 @@ import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/lib/hooks/useAuth';
 import { doc, getDoc, updateDoc, serverTimestamp, arrayUnion, arrayRemove, collection, query, where, orderBy, onSnapshot } from 'firebase/firestore';
-import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
+import { ref, uploadBytes, getDownloadURL, uploadBytesResumable } from 'firebase/storage';
 import { db, storage } from '@/lib/firebase/firebase';
-import { uploadProfilePicture } from '@/lib/firebase/firebaseUtils';
+import { uploadProfilePicture, updateUserProfile } from '@/lib/firebase/firebaseUtils';
 import Image from 'next/image';
 import { motion } from 'framer-motion';
 import { PencilIcon, PlusIcon, XMarkIcon, CameraIcon } from '@heroicons/react/24/outline';
 import Link from 'next/link';
+import { useImageUpload } from '@/lib/hooks/useImageUpload';
 
 interface ProfileData {
   name: string;
@@ -80,6 +81,32 @@ export default function ProfilePage() {
   const [nameInput, setNameInput] = useState('');
   const router = useRouter();
   const { user, loading: authLoading, signOut } = useAuth();
+  const [photoURL, setPhotoURL] = useState('');
+  const [photoPreview, setPhotoPreview] = useState('');
+  
+  const { 
+    uploadImage, 
+    isUploading, 
+    error: uploadError, 
+    progress, 
+    reset 
+  } = useImageUpload({
+    onSuccess: (url) => {
+      // Update local state
+      setPhotoURL(url);
+      setUploading(false);
+      
+      // Update the user's profile with the new photo URL
+      if (user) {
+        updateUserProfile(user.uid, { photoURL: url });
+      }
+    },
+    onError: (err) => {
+      console.error('Upload error:', err);
+      setUploading(false);
+    },
+    pathType: 'profile' // Use 'profile' path type for profile pictures
+  });
 
   useEffect(() => {
     const fetchProfileData = async () => {
@@ -284,31 +311,12 @@ export default function ProfilePage() {
         throw new Error('File size must be less than 5MB');
       }
 
-      // Create FormData
-      const formData = new FormData();
-      formData.append('file', file);
-      formData.append('userId', user.uid);
-
-      // Upload using the API route
-      const response = await fetch('/api/upload', {
-        method: 'POST',
-        body: formData,
-      });
-
-      if (!response.ok) {
-        const error = await response.json();
-        throw new Error(error.error || 'Failed to upload photo');
+      // Use the uploadImage function from useImageUpload hook
+      const downloadURL = await uploadImage(file);
+      
+      if (!downloadURL) {
+        throw new Error('Failed to upload photo');
       }
-
-      const { url: downloadURL } = await response.json();
-
-      // Update Firestore document
-      const userRef = doc(db, 'users', user.uid);
-      await updateDoc(userRef, {
-        photoURL: downloadURL,
-        photos: arrayUnion(downloadURL),
-        updatedAt: serverTimestamp(),
-      });
 
       // Update local state
       setProfileData(prev => {
@@ -437,6 +445,7 @@ export default function ProfilePage() {
                       fill
                       sizes="(max-width: 768px) 96px, 96px"
                       className="object-cover"
+                      priority
                     />
                   ) : (
                     <div className="h-full w-full bg-gray-200 flex items-center justify-center">

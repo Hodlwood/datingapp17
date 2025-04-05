@@ -22,6 +22,7 @@ export default function ImageUpload({
 }: ImageUploadProps) {
   const [preview, setPreview] = useState<string | null>(null);
   const [isUploading, setIsUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const { user } = useAuth();
 
@@ -40,11 +41,15 @@ export default function ImageUpload({
     console.log('Starting upload for file:', file.name, 'Size:', file.size);
     setPreview(URL.createObjectURL(file));
     setIsUploading(true);
+    setUploadProgress(0);
     setError(null);
 
     try {
       console.log('Calling uploadProfilePicture with userId:', user.uid);
-      const url = await uploadProfilePicture(user.uid, file);
+      const url = await uploadProfilePicture(user.uid, file, (progress) => {
+        console.log('Upload progress:', progress);
+        setUploadProgress(progress);
+      });
       console.log('Upload successful, URL:', url);
       onUploadComplete?.(url);
     } catch (error) {
@@ -54,6 +59,7 @@ export default function ImageUpload({
       onUploadError?.(error instanceof Error ? error : new Error(errorMessage));
     } finally {
       setIsUploading(false);
+      setUploadProgress(0);
     }
   }, [user, onUploadComplete, onUploadError]);
 
@@ -97,9 +103,28 @@ export default function ImageUpload({
             />
             {isUploading && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-black bg-opacity-50 rounded-lg">
-                <div className="animate-spin rounded-full h-8 w-8 border-t-2 border-b-2 border-white"></div>
-                <span className="mt-2 text-white">Uploading...</span>
-                <span className="text-xs text-white mt-1">Please don't close this window</span>
+                <div className="w-full max-w-xs px-4">
+                  <div className="relative pt-1">
+                    <div className="flex mb-2 items-center justify-between">
+                      <div>
+                        <span className="text-xs font-semibold inline-block py-1 px-2 uppercase rounded-full text-white">
+                          Uploading
+                        </span>
+                      </div>
+                      <div className="text-right">
+                        <span className="text-xs font-semibold inline-block text-white">
+                          {Math.round(uploadProgress)}%
+                        </span>
+                      </div>
+                    </div>
+                    <div className="overflow-hidden h-2 mb-4 text-xs flex rounded bg-gray-200">
+                      <div
+                        style={{ width: `${uploadProgress}%` }}
+                        className="shadow-none flex flex-col text-center whitespace-nowrap text-white justify-center bg-blue-500 transition-all duration-300"
+                      />
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </div>

@@ -1,75 +1,91 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { initializeApp, getApps, cert } from 'firebase-admin/app';
+import * as admin from 'firebase-admin';
+import { getAuth } from 'firebase-admin/auth';
 import { getStorage } from 'firebase-admin/storage';
 
-// Initialize Firebase Admin if it hasn't been initialized
-if (!getApps().length) {
+// Check if Firebase Admin is already initialized
+if (!admin.apps.length) {
   try {
-    initializeApp({
-      credential: cert({
-        projectId: process.env.FIREBASE_PROJECT_ID,
-        clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-        privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, '\n'),
+    // Check for required environment variables
+    const projectId = process.env.FIREBASE_PROJECT_ID;
+    const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+    const privateKey = process.env.FIREBASE_PRIVATE_KEY;
+
+    if (!projectId || !clientEmail || !privateKey) {
+      console.error('Missing required Firebase Admin environment variables');
+      throw new Error('Missing required Firebase Admin environment variables');
+    }
+
+    // Initialize Firebase Admin with explicit project ID
+    admin.initializeApp({
+      credential: admin.credential.cert({
+        projectId,
+        clientEmail,
+        privateKey: privateKey.replace(/\\n/g, '\n'),
       }),
+      storageBucket: process.env.FIREBASE_STORAGE_BUCKET || `${projectId}.appspot.com`,
     });
-    console.log('Firebase Admin initialized successfully');
+
+    console.log('Firebase Admin initialized successfully with project ID:', projectId);
   } catch (error) {
     console.error('Error initializing Firebase Admin:', error);
+    if (error instanceof Error) {
+      console.error('Error name:', error.name);
+      console.error('Error message:', error.message);
+      console.error('Error stack:', error.stack);
+    }
     throw error;
   }
 }
 
-// Get the storage instance
-const storageAdmin = getStorage();
-const bucketName = 'loveentrepreneurs-7c8a9.firebasestorage.app';
-console.log('Attempting to access bucket:', bucketName);
+// Get Firebase Admin services
+const auth = getAuth();
+const storage = getStorage();
+const bucket = storage.bucket();
 
-const bucket = storageAdmin.bucket(bucketName);
-
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   try {
-    const formData = await request.formData();
-    const file = formData.get('file') as File;
-    
-    if (!file) {
-      return NextResponse.json(
-        { error: 'No file provided' },
-        { status: 400 }
-      );
+    // Get the authorization header
+    const authHeader = request.headers.get('authorization');
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
-    // Convert File to Buffer
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-    
+    // Extract the token
+    const token = authHeader.split('Bearer ')[1];
+
+    // Verify the token
+    const decodedToken = await auth.verifyIdToken(token);
+    const uid = decodedToken.uid;
+
+    // Get the file from the request
+    const formData = await request.formData();
+    const file = formData.get('file') as File;
+    if (!file) {
+      return NextResponse.json({ error: 'No file provided' }, { status: 400 });
+    }
+
     // Create a unique filename
-    const timestamp = Date.now();
-    const filename = `${timestamp}-${file.name}`;
-    
-    // Upload to Firebase Storage
-    const fileRef = bucket.file(`photos/${filename}`);
-    await fileRef.save(buffer, {
+    const filename = `${uid}/${Date.now()}-${file.name}`;
+
+    // Upload the file to Firebase Storage
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const fileUpload = bucket.file(filename);
+    await fileUpload.save(buffer, {
       metadata: {
         contentType: file.type,
       },
     });
-    
-    // Get the download URL
-    const [url] = await fileRef.getSignedUrl({
+
+    // Get the public URL
+    const [url] = await fileUpload.getSignedUrl({
       action: 'read',
-      expires: Date.now() + 7 * 24 * 60 * 60 * 1000, // 7 days
+      expires: '03-01-2500', // Far future expiration
     });
-    
+
     return NextResponse.json({ url });
-  } catch (error: any) {
-    console.error('Upload error details:', {
-      message: error?.message || 'Unknown error',
-      code: error?.code || 'unknown',
-      stack: error?.stack || 'No stack trace'
-    });
-    return NextResponse.json(
-      { error: 'Failed to upload file', details: error?.message || 'Unknown error' },
-      { status: 500 }
-    );
+  } catch (error) {
+    console.error('Error uploading file:', error);
+    return NextResponse.json({ error: 'Internal server error' }, { status: 500 });
   }
 } 

@@ -8,6 +8,8 @@ import { ref, uploadBytes, getDownloadURL } from 'firebase/storage';
 import { db, storage } from '@/lib/firebase/firebase';
 import Image from 'next/image';
 import { PlusIcon, XMarkIcon } from '@heroicons/react/24/outline';
+import { uploadProfilePicture } from '@/lib/firebase/firebaseUtils';
+import { useImageUpload } from '@/lib/hooks/useImageUpload';
 
 export default function PersonalPreferencesPage() {
   const router = useRouter();
@@ -15,7 +17,6 @@ export default function PersonalPreferencesPage() {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [uploadingIndex, setUploadingIndex] = useState<number | null>(null);
-  const [uploadError, setUploadError] = useState<string>('');
   const [formData, setFormData] = useState({
     lookingFor: [] as string[],
     interests: [] as string[],
@@ -117,84 +118,50 @@ export default function PersonalPreferencesPage() {
     }));
   };
 
-  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>, index: number) => {
-    const file = event.target.files?.[0];
-    if (!file || !user) {
-      setUploadError('Please select a file and ensure you are logged in');
-      return;
-    }
-
-    // Reset error state
-    setUploadError('');
-    setUploadingIndex(index);
-
-    try {
-      // Basic validations
-      if (!file.type.startsWith('image/')) {
-        throw new Error('Please upload an image file (JPG, PNG, etc.)');
-      }
-      if (file.size > 5 * 1024 * 1024) {
-        throw new Error('Image size should be less than 5MB');
-      }
-
-      // Log Firebase Storage initialization
-      console.log('Checking Firebase Storage initialization...');
-      console.log('Storage bucket:', process.env.NEXT_PUBLIC_FIREBASE_STORAGE_BUCKET);
-      console.log('User ID:', user.uid);
-      console.log('File details:', {
-        name: file.name,
-        type: file.type,
-        size: file.size
-      });
-
-      // Verify storage is initialized
-      if (!storage) {
-        throw new Error('Firebase Storage is not initialized');
-      }
-
-      // Create a unique filename with timestamp and original extension
-      const extension = file.name.split('.').pop() || 'jpg';
-      const filename = `photo_${Date.now()}.${extension}`;
-      
-      // Use the correct path that matches our storage rules
-      const storageRef = ref(storage, `users/${user.uid}/photos/${filename}`);
-      console.log('Storage reference created:', storageRef.fullPath);
-
-      // Upload the file
-      console.log('Starting upload...');
-      const uploadResult = await uploadBytes(storageRef, file);
-      console.log('Upload successful:', uploadResult);
-
-      // Get the download URL
-      console.log('Getting download URL...');
-      const downloadURL = await getDownloadURL(uploadResult.ref);
-      console.log('Download URL received:', downloadURL);
-
+  const { 
+    uploadImage, 
+    isUploading, 
+    error: uploadError, 
+    progress, 
+    reset 
+  } = useImageUpload({
+    onSuccess: (url) => {
       // Update the photos array
       const newPhotos = [...formData.photos];
       while (newPhotos.length < 6) {
         newPhotos.push('');
       }
-      newPhotos[index] = downloadURL;
+      newPhotos[uploadingIndex!] = url;
 
       setFormData(prev => ({
         ...prev,
         photos: newPhotos
       }));
-
-    } catch (error) {
-      console.error('Upload error details:', {
-        error,
-        message: error instanceof Error ? error.message : 'Unknown error',
-        stack: error instanceof Error ? error.stack : undefined,
-        code: error instanceof Error ? (error as any).code : undefined,
-        name: error instanceof Error ? error.name : undefined
-      });
-      setUploadError(error instanceof Error ? error.message : 'Failed to upload image');
-    } finally {
+      
       setUploadingIndex(null);
-      event.target.value = '';
+    },
+    onError: (err) => {
+      console.error('Upload error:', err);
+      setUploadingIndex(null);
     }
+  });
+
+  const handleImageUpload = async (event: React.ChangeEvent<HTMLInputElement>, index: number) => {
+    const file = event.target.files?.[0];
+    if (!file || !user) {
+      console.error('Please select a file and ensure you are logged in');
+      return;
+    }
+
+    // Reset error state
+    reset();
+    setUploadingIndex(index);
+
+    // Upload the file
+    await uploadImage(file);
+    
+    // Clear the input value to allow selecting the same file again
+    event.target.value = '';
   };
 
   const removeImage = (index: number) => {
@@ -235,7 +202,8 @@ export default function PersonalPreferencesPage() {
       router.push('/profile');
     } catch (error) {
       console.error('Error saving profile:', error);
-      setUploadError('Failed to save profile. Please try again.');
+      console.error('Upload error:', error);
+      setUploadingIndex(null);
     } finally {
       setIsSubmitting(false);
     }
@@ -507,12 +475,12 @@ export default function PersonalPreferencesPage() {
                         accept="image/*"
                         className="hidden"
                         onChange={(e) => handleImageUpload(e, index)}
-                        disabled={uploadingIndex !== null}
+                        disabled={isUploading}
                       />
-                      {uploadingIndex === index ? (
+                      {uploadingIndex === index && isUploading ? (
                         <div className="flex flex-col items-center">
                           <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-2" />
-                          <span className="text-sm text-gray-500">Uploading...</span>
+                          <span className="text-sm text-gray-500">Uploading: {Math.round(progress)}%</span>
                         </div>
                       ) : (
                         <div className="flex flex-col items-center">

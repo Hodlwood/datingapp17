@@ -24,8 +24,29 @@ const nextConfig = {
       'lh3.googleusercontent.com',  // Google Auth profile images
       'firebasestorage.googleapis.com',  // Firebase Storage images
       'storage.googleapis.com',
-      'loveentrepreneurs-7c8a9.firebasestorage.app'
+      'datingapp5.appspot.com'
     ],
+  },
+  async headers() {
+    return [
+      {
+        source: '/:path*',
+        headers: [
+          {
+            key: 'Access-Control-Allow-Origin',
+            value: '*',
+          },
+          {
+            key: 'Access-Control-Allow-Methods',
+            value: 'GET,OPTIONS,PATCH,DELETE,POST,PUT',
+          },
+          {
+            key: 'Access-Control-Allow-Headers',
+            value: 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version',
+          },
+        ],
+      },
+    ];
   },
   webpack: (config, { isServer }) => {
     // Add a rule to handle the undici module

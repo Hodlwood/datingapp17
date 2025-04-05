@@ -19,9 +19,17 @@ import {
   serverTimestamp,
   orderBy,
   onSnapshot,
+  arrayUnion,
 } from "firebase/firestore";
 import { ref, uploadBytes, getDownloadURL, deleteObject, uploadBytesResumable } from "firebase/storage";
 import { Timestamp } from "firebase/firestore";
+import { STORAGE_PATHS } from './storageConfig';
+import { 
+  ErrorType, 
+  ErrorSeverity, 
+  createError, 
+  handleError 
+} from '@/lib/utils/errorUtils';
 
 // Auth functions
 export const logoutUser = () => signOut(auth);
@@ -68,7 +76,9 @@ export const createUserProfile = async (userId: string, profileData: any) => {
     await setDoc(doc(db, 'users', userId), {
       ...profileData,
       createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      updatedAt: new Date().toISOString(),
+      inDiscovery: true,
+      onboardingCompleted: true
     });
     return true;
   } catch (error) {
@@ -559,12 +569,15 @@ export interface SocialLink {
 export const uploadProfilePicture = async (
   userId: string,
   file: File,
-  onProgress?: (progress: number) => void
+  onProgress?: (progress: number) => void,
+  pathType: 'profile' | 'photo' | 'document' = 'profile',
+  chatId?: string
 ): Promise<string> => {
   try {
     console.log('Starting upload process...');
     console.log('User ID:', userId);
     console.log('File:', file.name, file.size, file.type);
+    console.log('Path type:', pathType);
 
     if (!storage) {
       throw new Error('Firebase Storage is not initialized');
@@ -574,27 +587,92 @@ export const uploadProfilePicture = async (
       throw new Error('User ID is required');
     }
 
-    // Create a simple filename
-    const fileExtension = file.name.split('.').pop()?.toLowerCase() || 'jpg';
-    const storageRef = ref(storage, `users/${userId}/profile.${fileExtension}`);
+    // Create a unique filename using the helper function
+    const filename = STORAGE_PATHS.generateUniqueFilename(file.name);
+    
+    // Get the full storage path based on the path type
+    let path: string;
+    
+    if (pathType === 'profile') {
+      path = STORAGE_PATHS.getUserProfilePicturePath(userId, filename);
+    } else if (pathType === 'photo') {
+      path = STORAGE_PATHS.getUserPhotoPath(userId, filename);
+    } else if (pathType === 'document') {
+      path = `${STORAGE_PATHS.USERS.DOCUMENTS(userId)}/${filename}`;
+    } else if (chatId) {
+      // Handle chat attachments if chatId is provided
+      path = STORAGE_PATHS.getChatAttachmentPath(chatId, filename);
+    } else {
+      throw new Error('Invalid path type or missing chatId for chat attachments');
+    }
+    
+    // Create storage reference
+    const storageRef = ref(storage, path);
     console.log('Storage reference created:', storageRef.fullPath);
 
-    // Upload the file
-    const snapshot = await uploadBytes(storageRef, file);
-    console.log('Upload completed, getting download URL...');
+    // Create the upload task with metadata
+    const metadata = {
+      contentType: file.type,
+      customMetadata: {
+        uploadedBy: userId,
+        originalName: file.name,
+        timestamp: Date.now().toString(),
+        pathType
+      }
+    };
 
-    // Get the download URL
-    const downloadURL = await getDownloadURL(snapshot.ref);
-    console.log('Download URL obtained:', downloadURL);
+    // Create the upload task
+    const uploadTask = uploadBytesResumable(storageRef, file, metadata);
 
-    // Update user profile with the new photo URL
-    const userRef = doc(db, 'users', userId);
-    await updateDoc(userRef, {
-      photoURL: downloadURL,
-      updatedAt: new Date().toISOString()
+    // Return a promise that resolves with the download URL
+    return new Promise((resolve, reject) => {
+      uploadTask.on(
+        'state_changed',
+        (snapshot) => {
+          // Handle progress
+          const progress = (snapshot.bytesTransferred / snapshot.totalBytes) * 100;
+          console.log('Upload progress:', progress);
+          onProgress?.(progress);
+        },
+        (error) => {
+          // Handle errors
+          console.error('Upload error:', error);
+          console.error('Error code:', error.code);
+          console.error('Error message:', error.message);
+          console.error('Error serverResponse:', error.serverResponse);
+          reject(error);
+        },
+        async () => {
+          try {
+            // Get the download URL
+            const downloadURL = await getDownloadURL(uploadTask.snapshot.ref);
+            console.log('Download URL obtained:', downloadURL);
+
+            // Update user profile with the new photo URL if it's a profile picture
+            if (pathType === 'profile') {
+              const userRef = doc(db, 'users', userId);
+              await updateDoc(userRef, {
+                photoURL: downloadURL,
+                photos: arrayUnion(downloadURL),
+                updatedAt: serverTimestamp()
+              });
+            } else if (pathType === 'photo') {
+              // Just add to photos array for regular photos
+              const userRef = doc(db, 'users', userId);
+              await updateDoc(userRef, {
+                photos: arrayUnion(downloadURL),
+                updatedAt: serverTimestamp()
+              });
+            }
+
+            resolve(downloadURL);
+          } catch (error) {
+            console.error('Error getting download URL or updating profile:', error);
+            reject(error);
+          }
+        }
+      );
     });
-
-    return downloadURL;
   } catch (error) {
     console.error('Error in uploadProfilePicture:', error);
     if (error instanceof Error) {
@@ -642,3 +720,58 @@ export async function deleteProfilePicture(userId: string) {
     }
   }
 }
+
+export const updateAllProfiles = async () => {
+  try {
+    const usersRef = collection(db, 'users');
+    const querySnapshot = await getDocs(usersRef);
+    const batch = writeBatch(db);
+    let count = 0;
+
+    querySnapshot.forEach((doc) => {
+      const data = doc.data();
+      if (!data.inDiscovery || !data.onboardingCompleted) {
+        batch.update(doc.ref, {
+          inDiscovery: true,
+          onboardingCompleted: true,
+          updatedAt: new Date().toISOString()
+        });
+        count++;
+      }
+    });
+
+    if (count > 0) {
+      await batch.commit();
+      console.log(`Updated ${count} profiles with discovery fields`);
+    }
+    return true;
+  } catch (error) {
+    console.error('Error updating profiles:', error);
+    return false;
+  }
+};
+
+/**
+ * Validates an image file for upload
+ * @param file The file to validate
+ * @returns An object with validation result and error message if any
+ */
+export const validateImageFile = (file: File): { isValid: boolean; error?: string } => {
+  // Check if file exists
+  if (!file) {
+    return { isValid: false, error: 'No file selected' };
+  }
+
+  // Check file type
+  if (!file.type.startsWith('image/')) {
+    return { isValid: false, error: 'File must be an image (JPG, PNG, etc.)' };
+  }
+
+  // Check file size (5MB limit)
+  const MAX_FILE_SIZE = 5 * 1024 * 1024; // 5MB in bytes
+  if (file.size > MAX_FILE_SIZE) {
+    return { isValid: false, error: 'Image size must be less than 5MB' };
+  }
+
+  return { isValid: true };
+};

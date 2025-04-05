@@ -11,6 +11,7 @@ import {
   ChatBubbleLeftIcon,
   UserCircleIcon 
 } from '@heroicons/react/24/outline';
+import Image from 'next/image';
 
 export default function Navigation() {
   const { user, error } = useAuth();
@@ -117,6 +118,26 @@ export default function Navigation() {
                       className="text-gray-500 hover:text-gray-700"
                     >
                       <Cog6ToothIcon className="h-6 w-6" />
+                    </Link>
+                    <Link
+                      href="/profile"
+                      className="relative w-10 h-10 rounded-full overflow-hidden border-2 border-gray-200 hover:border-purple-500 transition-colors"
+                    >
+                      {user.photoURL ? (
+                        <Image
+                          src={user.photoURL}
+                          alt="Profile"
+                          fill
+                          sizes="(max-width: 768px) 40px, 40px"
+                          className="object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full bg-gray-200 flex items-center justify-center">
+                          <span className="text-gray-500 text-lg">
+                            {user.email?.[0].toUpperCase() || '?'}
+                          </span>
+                        </div>
+                      )}
                     </Link>
                     <button
                       onClick={handleSignOut}

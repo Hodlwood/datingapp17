@@ -10,6 +10,11 @@ import { motion } from 'framer-motion';
 import Image from 'next/image';
 import { PlusIcon, XMarkIcon } from '@heroicons/react/24/outline';
 import { updateProfile } from 'firebase/auth';
+import { uploadProfilePicture } from '@/lib/firebase/firebaseUtils';
+import { useImageUpload } from '@/lib/hooks/useImageUpload';
+import ErrorMessage from '@/app/components/ErrorMessage';
+import { useErrorHandler } from '@/lib/hooks/useErrorHandler';
+import { ErrorType, ErrorSeverity, createError } from '@/lib/utils/errorUtils';
 
 interface OnboardingData {
   name: string;
@@ -89,11 +94,40 @@ export default function OnboardingPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [photoURL, setPhotoURL] = useState('');
-  const [photoPreview, setPhotoPreview] = useState('');
+  const [photoURL, setPhotoURL] = useState<string | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
   const { user, loading: authLoading } = useAuth();
+  const { error: uploadError, setError: setUploadError, handleError, clearError } = useErrorHandler();
+
+  const { 
+    uploadImage, 
+    isUploading, 
+    progress, 
+    reset: resetUpload 
+  } = useImageUpload({
+    onSuccess: (url) => {
+      setPhotoURL(url);
+      setUploading(false);
+      setData(prev => ({
+        ...prev,
+        photos: [...prev.photos, url]
+      }));
+    },
+    onError: (error) => {
+      setUploading(false);
+      handleError(createError(
+        ErrorType.UPLOAD,
+        error,
+        ErrorSeverity.MEDIUM
+      ));
+    },
+    onProgress: (progress) => {
+      // You can use this to show upload progress if needed
+    },
+    pathType: 'photo'
+  });
 
   // Check authentication status
   useEffect(() => {
@@ -191,56 +225,30 @@ export default function OnboardingPage() {
   };
 
   const handlePhotoUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) {
+      handleError(createError(
+        ErrorType.VALIDATION,
+        'No file selected',
+        ErrorSeverity.LOW
+      ));
+      return;
+    }
+
+    // Create a preview URL
+    const previewURL = URL.createObjectURL(file);
+    setPhotoPreview(previewURL);
+    setUploading(true);
+
     try {
-      const file = e.target.files?.[0];
-      if (!file) return;
-
-      if (!user) {
-        console.error('No user found');
-        return;
-      }
-
-      console.log('Starting photo upload for user:', user.uid);
-
-      // Create a unique filename
-      const timestamp = Date.now();
-      const filename = `${timestamp}_${file.name.replace(/[^a-zA-Z0-9.]/g, '_')}`;
-      const path = `users/${user.uid}/photos/${filename}`;
-
-      // Get a reference to the file location
-      const storageRef = ref(storage, path);
-
-      // Upload the file
-      console.log('Uploading to Firebase Storage...');
-      const snapshot = await uploadBytes(storageRef, file, {
-        contentType: file.type,
-        customMetadata: {
-          uploadedBy: user.uid,
-        },
-      });
-
-      // Get the download URL
-      const downloadURL = await getDownloadURL(snapshot.ref);
-      console.log('Upload successful, download URL:', downloadURL);
-
-      // Update user profile
-      await updateProfile(user, {
-        photoURL: downloadURL,
-      });
-
-      // Update Firestore document
-      const userRef = doc(db, 'users', user.uid);
-      await updateDoc(userRef, {
-        photoURL: downloadURL,
-        updatedAt: serverTimestamp(),
-      });
-
-      // Update local state
-      setPhotoURL(downloadURL);
-      setPhotoPreview(URL.createObjectURL(file));
-    } catch (error) {
-      console.error('Error uploading photo:', error);
-      alert('Failed to upload photo. Please try again.');
+      await uploadImage(file);
+    } catch (error: any) {
+      handleError(createError(
+        ErrorType.UPLOAD,
+        error.message || 'Failed to upload photo',
+        ErrorSeverity.HIGH,
+        error
+      ));
     }
   };
 
@@ -681,35 +689,55 @@ export default function OnboardingPage() {
             exit={{ opacity: 0, y: -20 }}
             className="space-y-6"
           >
-            <h2 className="text-2xl font-bold text-center">Add Your Photos</h2>
-            <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-              {data.photos.map((photo, index) => (
-                <div key={index} className="relative aspect-square">
-                  <Image
-                    src={photo}
-                    alt={`Photo ${index + 1}`}
-                    fill
-                    className="object-cover rounded-lg"
-                  />
-                  <button
-                    onClick={() => handleRemovePhoto(index)}
-                    className="absolute top-2 right-2 p-1 bg-red-500 text-white rounded-full hover:bg-red-600"
-                  >
-                    <XMarkIcon className="h-4 w-4" />
-                  </button>
-                </div>
-              ))}
-              {data.photos.length < 6 && (
-                <label className="aspect-square flex items-center justify-center border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-50">
-                  <input
-                    type="file"
-                    accept="image/*"
-                    onChange={handlePhotoUpload}
-                    className="hidden"
-                  />
-                  <PlusIcon className="h-8 w-8 text-gray-400" />
-                </label>
+            <div className="space-y-4">
+              <h2 className="text-2xl font-bold text-center">Add Your Photos</h2>
+              {uploadError && (
+                <ErrorMessage 
+                  error={uploadError.message} 
+                  onDismiss={clearError} 
+                  className="mb-4"
+                />
               )}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+                {data.photos.map((photo, index) => (
+                  <div key={index} className="relative aspect-square">
+                    <Image
+                      src={photo}
+                      alt={`Photo ${index + 1}`}
+                      fill
+                      className="object-cover rounded-lg"
+                    />
+                    <button
+                      onClick={() => handleRemovePhoto(index)}
+                      className="absolute top-2 right-2 p-1 bg-red-500 text-white rounded-full hover:bg-red-600"
+                    >
+                      <XMarkIcon className="h-4 w-4" />
+                    </button>
+                  </div>
+                ))}
+                {data.photos.length < 6 && (
+                  <label className="aspect-square flex items-center justify-center border-2 border-dashed border-gray-300 rounded-lg cursor-pointer hover:border-blue-500 hover:bg-blue-50">
+                    <input
+                      type="file"
+                      accept="image/*"
+                      onChange={handlePhotoUpload}
+                      className="hidden"
+                      disabled={isUploading}
+                    />
+                    {isUploading ? (
+                      <div className="flex flex-col items-center">
+                        <div className="w-8 h-8 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mb-2" />
+                        <span className="text-sm text-gray-500">Uploading: {Math.round(progress)}%</span>
+                      </div>
+                    ) : (
+                      <PlusIcon className="h-8 w-8 text-gray-400" />
+                    )}
+                  </label>
+                )}
+              </div>
+              <p className="text-sm text-gray-500">
+                Add up to 6 photos. First photo will be your profile picture. Each photo must be less than 5MB.
+              </p>
             </div>
             <div className="flex justify-between">
               <button
@@ -734,32 +762,40 @@ export default function OnboardingPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 flex items-center justify-center">
-      <div className="max-w-2xl w-full mx-auto px-4 sm:px-6 lg:px-8">
-        <div className="bg-white shadow rounded-lg p-6">
-          <div className="mb-8">
-            <div className="flex justify-between items-center">
-              <button
-                onClick={handleBack}
-                disabled={step === 1}
-                className="text-gray-500 hover:text-gray-700 disabled:opacity-50"
-              >
-                Back
-              </button>
-              <div className="text-sm text-gray-500">
-                Step {step} of 11
-              </div>
-              <button
-                onClick={step === 11 ? handleSubmit : handleNext}
-                disabled={step === 11 && data.photos.length === 0}
-                className="text-blue-600 hover:text-blue-700 disabled:opacity-50"
-              >
-                {step === 11 ? 'Complete Profile' : 'Next'}
-              </button>
+    <div className="min-h-screen bg-gray-100 py-12 px-4 sm:px-6 lg:px-8">
+      <div className="max-w-md mx-auto bg-white rounded-lg shadow-md p-6">
+        <h1 className="text-2xl font-bold text-center mb-6">Complete Your Profile</h1>
+        
+        {uploadError && (
+          <ErrorMessage 
+            error={uploadError.message} 
+            onDismiss={clearError} 
+            className="mb-4"
+          />
+        )}
+
+        <div className="mb-8">
+          <div className="flex justify-between items-center">
+            <button
+              onClick={handleBack}
+              disabled={step === 1}
+              className="text-gray-500 hover:text-gray-700 disabled:opacity-50"
+            >
+              Back
+            </button>
+            <div className="text-sm text-gray-500">
+              Step {step} of 11
             </div>
+            <button
+              onClick={step === 11 ? handleSubmit : handleNext}
+              disabled={step === 11 && data.photos.length === 0}
+              className="text-blue-600 hover:text-blue-700 disabled:opacity-50"
+            >
+              {step === 11 ? 'Complete Profile' : 'Next'}
+            </button>
           </div>
-          {renderStep()}
         </div>
+        {renderStep()}
       </div>
     </div>
   );

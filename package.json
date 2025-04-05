@@ -1,12 +1,13 @@
 {
-  "name": "entrepreneur-match",
+  "name": "datingapp5",
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 3001",
+    "dev": "next dev -p 3000",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint"
+    "lint": "next lint",
+    "refresh": "kill -9 $(lsof -ti:3000,3001,3003) 2>/dev/null || true && npm run dev"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^1.2.1",
