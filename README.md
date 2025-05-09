@@ -13,3 +13,26 @@ This doesn't really matter, but is useful for the AI to understand more about th
 - TailwindCSS
 - Firebase Auth, Storage, and Database
 - Multiple AI endpoints including OpenAI, Anthropic, and Replicate using Vercel's AI SDK
+
+## Environment Variables Setup
+
+1. Copy `.env.example` to `.env.local`:
+```bash
+cp .env.example .env.local
+```
+
+2. Fill in your environment variables in `.env.local`:
+- Firebase Configuration: Get these from your Firebase Console
+- OpenAI API Key: Get from OpenAI Dashboard
+- Replicate API Token: Get from Replicate Dashboard
+- Resend API Key: Get from Resend Dashboard
+- Deepgram API Key: Get from Deepgram Dashboard
+
+3. Never commit `.env.local` to version control
+
+## Development
+
+```bash
+npm install
+npm run dev
+```
