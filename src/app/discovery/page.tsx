@@ -451,18 +451,19 @@ export default function DiscoveryPage() {
   };
 
   const handleSendMessage = async () => {
-    if (!user || !selectedProfile) return;
+    if (!user || !selectedProfile || !messageContent.trim()) return;
 
     try {
       setSendingMessage(true);
       
-      // Create the message document with a simpler structure
+      // Create the message document with the actual message content
       const messageData = {
         fromUserId: user.uid,
         toUserId: selectedProfile.id,
-        content: "hi",
+        content: messageContent.trim(),
         createdAt: serverTimestamp(),
-        read: false
+        read: false,
+        hasReplied: false
       };
 
       // Create the message in the messages collection
@@ -479,6 +480,7 @@ export default function DiscoveryPage() {
         setShowOverlay(false);
         setShowMessagePopup(false);
         setSelectedProfile(null);
+        setMessageContent('');
         setCurrentIndex((prev) => prev + 1);
       }, 500);
     } catch (err) {
