@@ -19,13 +19,40 @@ const nextConfig = {
         hostname: 'firebasestorage.googleapis.com',
         pathname: '/**',
       },
+      {
+        protocol: 'https',
+        hostname: 'placehold.co',
+        port: '',
+        pathname: '/**',
+      },
+      {
+        protocol: 'https',
+        hostname: 'replicate.com',
+        pathname: '/**',
+      },
+      {
+        protocol: 'https',
+        hostname: 'replicate.delivery',
+        pathname: '/**',
+      },
+      {
+        protocol: 'https',
+        hostname: 'lh3.googleusercontent.com',
+        pathname: '/**',
+      },
+      {
+        protocol: 'https',
+        hostname: 'storage.googleapis.com',
+        pathname: '/**',
+      },
+      {
+        protocol: 'https',
+        hostname: 'datingapp5.appspot.com',
+        pathname: '/**',
+      }
     ],
-    domains: [
-      'lh3.googleusercontent.com',  // Google Auth profile images
-      'firebasestorage.googleapis.com',  // Firebase Storage images
-      'storage.googleapis.com',
-      'datingapp5.appspot.com'
-    ],
+    dangerouslyAllowSVG: true,
+    contentSecurityPolicy: "default-src 'self'; script-src 'none'; sandbox;",
   },
   async headers() {
     return [
@@ -45,6 +72,14 @@ const nextConfig = {
             value: 'X-CSRF-Token, X-Requested-With, Accept, Accept-Version, Content-Length, Content-MD5, Content-Type, Date, X-Api-Version',
           },
         ],
+      },
+    ];
+  },
+  async rewrites() {
+    return [
+      {
+        source: "/api/:path*",
+        destination: "https://api.openai.com/:path*",
       },
     ];
   },
@@ -68,4 +103,4 @@ const nextConfig = {
   }
 };
 
-module.exports = nextConfig 
+module.exports = nextConfig; 
