@@ -456,11 +456,11 @@ export default function DiscoveryPage() {
     try {
       setSendingMessage(true);
       
-      // Create the message document with a simpler structure
+      // Create the message document with the actual message content
       const messageData = {
         fromUserId: user.uid,
         toUserId: selectedProfile.id,
-        content: "hi",
+        content: messageContent.trim(),
         createdAt: serverTimestamp(),
         read: false
       };
@@ -479,6 +479,7 @@ export default function DiscoveryPage() {
         setShowOverlay(false);
         setShowMessagePopup(false);
         setSelectedProfile(null);
+        setMessageContent(''); // Clear the message content
         setCurrentIndex((prev) => prev + 1);
       }, 500);
     } catch (err) {
