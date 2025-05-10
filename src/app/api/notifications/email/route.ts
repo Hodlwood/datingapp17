@@ -3,6 +3,7 @@ import { Resend } from 'resend';
 import { apiLimiter } from '@/lib/middleware/rateLimit';
 import { validateRequest, emailNotificationSchema } from '@/lib/utils/validation';
 import { corsMiddleware } from '@/lib/middleware/cors';
+import { errorResponse, ValidationError, NotFoundError } from '@/lib/utils/errorHandler';
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
@@ -23,17 +24,11 @@ export async function POST(request: Request) {
     // Validate request body
     const validationResult = await validateRequest(request, emailNotificationSchema);
     if (!validationResult.success) {
-      return NextResponse.json(
-        { error: validationResult.error },
-        { status: 400 }
-      );
+      throw new ValidationError(validationResult.error);
     }
 
     if (!resend) {
-      return NextResponse.json(
-        { error: 'Email service is not configured' },
-        { status: 503 }
-      );
+      throw new NotFoundError('Email service is not configured');
     }
 
     const { to, subject, html } = validationResult.data;
@@ -47,10 +42,6 @@ export async function POST(request: Request) {
 
     return NextResponse.json(data);
   } catch (error) {
-    console.error('Error sending email:', error);
-    return NextResponse.json(
-      { error: 'Failed to send email' },
-      { status: 500 }
-    );
+    return errorResponse(error);
   }
 } 
