@@ -1,6 +1,7 @@
 import { openai } from '@/lib/openai';
 import { apiLimiter } from '@/lib/middleware/rateLimit';
 import { validateRequest, openaiMessageSchema } from '@/lib/utils/validation';
+import { corsMiddleware } from '@/lib/middleware/cors';
 
 const systemPrompt = `You are an expert dating coach and relationship advisor specializing in helping entrepreneurs find meaningful relationships. Your role is to:
 
@@ -15,6 +16,12 @@ Always maintain a professional, supportive tone and focus on practical, actionab
 
 export async function POST(req: Request) {
   try {
+    // Apply CORS middleware
+    const corsResponse = corsMiddleware(req);
+    if (corsResponse) {
+      return corsResponse;
+    }
+
     // Apply rate limiting
     const rateLimitResult = await apiLimiter(req);
     if (rateLimitResult) {
