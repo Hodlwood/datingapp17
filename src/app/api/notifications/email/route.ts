@@ -8,11 +8,18 @@ import { sanitizeEmail, sanitizeText, sanitizeHTML } from '@/lib/utils/sanitize'
 import { logger } from '@/lib/utils/logger';
 import { requestSizeMiddleware } from '@/lib/middleware/requestSize';
 import { timeoutMiddleware } from '@/lib/middleware/timeout';
+import { securityHeadersMiddleware } from '@/lib/middleware/securityHeaders';
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
 async function handleEmailRequest(request: Request) {
   try {
+    // Apply security headers
+    const securityResponse = securityHeadersMiddleware(request);
+    if (securityResponse) {
+      return securityResponse;
+    }
+
     // Apply CORS middleware
     const corsResponse = corsMiddleware(request);
     if (corsResponse) {
