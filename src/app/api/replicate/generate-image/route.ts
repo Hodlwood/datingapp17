@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import Replicate from "replicate";
 import { apiLimiter } from '@/lib/middleware/rateLimit';
+import { validateRequest, imageGenerationSchema } from '@/lib/utils/validation';
 
 const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN,
@@ -14,19 +15,26 @@ export async function POST(request: Request) {
       return rateLimitResult;
     }
 
+    // Validate request body
+    const validationResult = await validateRequest(request, imageGenerationSchema);
+    if (!validationResult.success) {
+      return NextResponse.json(
+        { error: validationResult.error },
+        { status: 400 }
+      );
+    }
+
     if (!process.env.REPLICATE_API_TOKEN) {
       throw new Error(
         "The REPLICATE_API_TOKEN environment variable is not set. See README.md for instructions on how to set it."
       );
     }
 
-    const { prompt } = await request.json();
-
     const output = await replicate.run(
       "stability-ai/stable-diffusion:db21e45d3f7023abc2a46ee38a23973f6dce16bb082a930b0c49861f96d1e5bf",
       {
         input: {
-          prompt: prompt,
+          prompt: validationResult.data.prompt,
           image_dimensions: "512x512",
           num_outputs: 1,
           num_inference_steps: 50,

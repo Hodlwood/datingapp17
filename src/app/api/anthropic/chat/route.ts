@@ -1,6 +1,7 @@
 import { anthropic } from "@ai-sdk/anthropic";
 import { convertToCoreMessages, streamText } from "ai";
 import { apiLimiter } from '@/lib/middleware/rateLimit';
+import { validateRequest, anthropicMessageSchema } from '@/lib/utils/validation';
 
 export const runtime = "edge";
 
@@ -12,10 +13,18 @@ export async function POST(req: Request) {
       return rateLimitResult;
     }
 
-    const { messages } = await req.json();
+    // Validate request body
+    const validationResult = await validateRequest(req, anthropicMessageSchema);
+    if (!validationResult.success) {
+      return new Response(
+        JSON.stringify({ error: validationResult.error }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } }
+      );
+    }
+
     const result = await streamText({
       model: anthropic("claude-3-5-sonnet-20240620"),
-      messages: convertToCoreMessages(messages),
+      messages: convertToCoreMessages(validationResult.data.messages),
       system: "You are a helpful AI assistant",
     });
 

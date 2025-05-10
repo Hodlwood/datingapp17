@@ -1,5 +1,6 @@
 import { openai } from '@/lib/openai';
 import { apiLimiter } from '@/lib/middleware/rateLimit';
+import { validateRequest, openaiMessageSchema } from '@/lib/utils/validation';
 
 const systemPrompt = `You are an expert dating coach and relationship advisor specializing in helping entrepreneurs find meaningful relationships. Your role is to:
 
@@ -20,12 +21,11 @@ export async function POST(req: Request) {
       return rateLimitResult;
     }
 
-    const { messages } = await req.json();
-    
-    if (!messages || !Array.isArray(messages)) {
-      console.error('Invalid messages format:', messages);
+    // Validate request body
+    const validationResult = await validateRequest(req, openaiMessageSchema);
+    if (!validationResult.success) {
       return new Response(
-        JSON.stringify({ error: 'Invalid messages format' }),
+        JSON.stringify({ error: validationResult.error }),
         { status: 400, headers: { 'Content-Type': 'application/json' } }
       );
     }
@@ -33,7 +33,7 @@ export async function POST(req: Request) {
     // Add system prompt to the beginning of the conversation
     const messagesWithSystem = [
       { role: 'system', content: systemPrompt },
-      ...messages
+      ...validationResult.data.messages
     ];
 
     console.log('Sending request to OpenAI with messages:', messagesWithSystem);
