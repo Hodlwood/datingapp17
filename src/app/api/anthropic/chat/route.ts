@@ -2,11 +2,18 @@ import { anthropic } from "@ai-sdk/anthropic";
 import { convertToCoreMessages, streamText } from "ai";
 import { apiLimiter } from '@/lib/middleware/rateLimit';
 import { validateRequest, anthropicMessageSchema } from '@/lib/utils/validation';
+import { corsMiddleware } from '@/lib/middleware/cors';
 
 export const runtime = "edge";
 
 export async function POST(req: Request) {
   try {
+    // Apply CORS middleware
+    const corsResponse = corsMiddleware(req);
+    if (corsResponse) {
+      return corsResponse;
+    }
+
     // Apply rate limiting
     const rateLimitResult = await apiLimiter(req);
     if (rateLimitResult) {
