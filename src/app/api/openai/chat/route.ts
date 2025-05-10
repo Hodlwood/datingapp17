@@ -1,4 +1,5 @@
 import { openai } from '@/lib/openai';
+import { apiLimiter } from '@/lib/middleware/rateLimit';
 
 const systemPrompt = `You are an expert dating coach and relationship advisor specializing in helping entrepreneurs find meaningful relationships. Your role is to:
 
@@ -13,6 +14,12 @@ Always maintain a professional, supportive tone and focus on practical, actionab
 
 export async function POST(req: Request) {
   try {
+    // Apply rate limiting
+    const rateLimitResult = await apiLimiter(req);
+    if (rateLimitResult) {
+      return rateLimitResult;
+    }
+
     const { messages } = await req.json();
     
     if (!messages || !Array.isArray(messages)) {
