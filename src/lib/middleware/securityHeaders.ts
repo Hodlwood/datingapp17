@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/utils/logger';
 
 // Security headers configuration
@@ -35,7 +35,7 @@ const securityHeaders = {
   `.replace(/\s+/g, ' ').trim(),
 };
 
-export function securityHeadersMiddleware(request: Request): Response | null {
+export async function securityHeadersMiddleware(request: NextRequest): Promise<NextResponse | null> {
   try {
     const response = NextResponse.next();
     
