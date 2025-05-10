@@ -1,3 +1,4 @@
+import { NextRequest, NextResponse } from 'next/server';
 import { anthropic } from "@ai-sdk/anthropic";
 import { convertToCoreMessages, streamText } from "ai";
 import { apiLimiter } from '@/lib/middleware/rateLimit';
@@ -8,13 +9,20 @@ import { sanitizeText } from '@/lib/utils/sanitize';
 import { logger } from '@/lib/utils/logger';
 import { requestSizeMiddleware } from '@/lib/middleware/requestSize';
 import { timeoutMiddleware } from '@/lib/middleware/timeout';
+import { securityHeadersMiddleware } from '@/lib/middleware/securityHeaders';
 
 export const runtime = "edge";
 
-async function handleChatRequest(request: Request) {
+async function handleChatRequest(request: NextRequest) {
   try {
+    // Apply security headers
+    const securityResponse = await securityHeadersMiddleware(request);
+    if (securityResponse) {
+      return securityResponse;
+    }
+
     // Apply CORS middleware
-    const corsResponse = corsMiddleware(request);
+    const corsResponse = await corsMiddleware(request);
     if (corsResponse) {
       return corsResponse;
     }
@@ -61,6 +69,6 @@ async function handleChatRequest(request: Request) {
   }
 }
 
-export async function POST(request: Request) {
+export async function POST(request: NextRequest) {
   return timeoutMiddleware(request, handleChatRequest);
 }

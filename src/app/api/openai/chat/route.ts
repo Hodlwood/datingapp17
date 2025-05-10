@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import OpenAI from 'openai';
 import { apiLimiter } from '@/lib/middleware/rateLimit';
 import { validateRequest, openaiMessageSchema } from '@/lib/utils/validation';
@@ -8,6 +8,7 @@ import { sanitizeText } from '@/lib/utils/sanitize';
 import { logger } from '@/lib/utils/logger';
 import { requestSizeMiddleware } from '@/lib/middleware/requestSize';
 import { timeoutMiddleware } from '@/lib/middleware/timeout';
+import { securityHeadersMiddleware } from '@/lib/middleware/securityHeaders';
 import { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
@@ -23,10 +24,16 @@ const systemPrompt = `You are an expert dating coach and relationship advisor sp
 
 Always maintain a professional, supportive tone and focus on practical, actionable advice. Respect user privacy and avoid making assumptions about their specific situation.`;
 
-async function handleChatRequest(request: Request) {
+async function handleChatRequest(request: NextRequest) {
   try {
+    // Apply security headers
+    const securityResponse = await securityHeadersMiddleware(request);
+    if (securityResponse) {
+      return securityResponse;
+    }
+
     // Apply CORS middleware
-    const corsResponse = corsMiddleware(request);
+    const corsResponse = await corsMiddleware(request);
     if (corsResponse) {
       return corsResponse;
     }

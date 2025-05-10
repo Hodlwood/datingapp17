@@ -1,13 +1,20 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { apiLimiter } from '@/lib/middleware/rateLimit';
 import { corsMiddleware } from '@/lib/middleware/cors';
 import { errorResponse, ValidationError, NotFoundError } from '@/lib/utils/errorHandler';
 import { logger } from '@/lib/utils/logger';
+import { securityHeadersMiddleware } from '@/lib/middleware/securityHeaders';
 
-export async function GET(request: Request) {
+export async function GET(request: NextRequest) {
   try {
+    // Apply security headers
+    const securityResponse = await securityHeadersMiddleware(request);
+    if (securityResponse) {
+      return securityResponse;
+    }
+
     // Apply CORS middleware
-    const corsResponse = corsMiddleware(request);
+    const corsResponse = await corsMiddleware(request);
     if (corsResponse) {
       return corsResponse;
     }

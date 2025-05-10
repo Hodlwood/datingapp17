@@ -1,4 +1,4 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import Replicate from "replicate";
 import { apiLimiter } from '@/lib/middleware/rateLimit';
 import { validateRequest, imageGenerationSchema } from '@/lib/utils/validation';
@@ -8,13 +8,20 @@ import { sanitizeText } from '@/lib/utils/sanitize';
 import { logger } from '@/lib/utils/logger';
 import { requestSizeMiddleware } from '@/lib/middleware/requestSize';
 import { timeoutMiddleware } from '@/lib/middleware/timeout';
+import { securityHeadersMiddleware } from '@/lib/middleware/securityHeaders';
 
 const replicate = process.env.REPLICATE_API_TOKEN ? new Replicate({ auth: process.env.REPLICATE_API_TOKEN }) : null;
 
-async function handleImageRequest(request: Request) {
+async function handleImageRequest(request: NextRequest) {
   try {
+    // Apply security headers
+    const securityResponse = await securityHeadersMiddleware(request);
+    if (securityResponse) {
+      return securityResponse;
+    }
+
     // Apply CORS middleware
-    const corsResponse = corsMiddleware(request);
+    const corsResponse = await corsMiddleware(request);
     if (corsResponse) {
       return corsResponse;
     }
