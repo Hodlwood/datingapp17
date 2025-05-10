@@ -7,10 +7,11 @@ import { errorResponse, ValidationError, NotFoundError } from '@/lib/utils/error
 import { sanitizeEmail, sanitizeText, sanitizeHTML } from '@/lib/utils/sanitize';
 import { logger } from '@/lib/utils/logger';
 import { requestSizeMiddleware } from '@/lib/middleware/requestSize';
+import { timeoutMiddleware } from '@/lib/middleware/timeout';
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
-export async function POST(request: Request) {
+async function handleEmailRequest(request: Request) {
   try {
     // Apply CORS middleware
     const corsResponse = corsMiddleware(request);
@@ -61,4 +62,8 @@ export async function POST(request: Request) {
     logger.error('Error sending email notification', { error }, request);
     return errorResponse(error);
   }
+}
+
+export async function POST(request: Request) {
+  return timeoutMiddleware(request, handleEmailRequest);
 } 
