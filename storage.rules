@@ -2,52 +2,39 @@ rules_version = '2';
 
 service firebase.storage {
   match /b/{bucket}/o {
-    // Helper function to check if user is authenticated
+    // Helper functions
     function isAuthenticated() {
       return request.auth != null;
     }
 
-    // Helper function to check if file is an image
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
     function isImage() {
       return request.resource.contentType.matches('image/.*');
     }
 
-    // Helper function to check if file is a document
-    function isDocument() {
-      return request.resource.contentType.matches('application/.*') ||
-             request.resource.contentType.matches('text/.*');
-    }
-
-    // Helper function to check file size (max 10MB)
     function isUnderSizeLimit() {
-      return request.resource.size < 10 * 1024 * 1024;
+      return request.resource.size < 10 * 1024 * 1024; // 10MB limit
     }
 
-    // Photos directory - allow authenticated users to upload photos
-    match /photos/{filename} {
-      allow read: if true;
-      allow write: if isAuthenticated() && 
+    // User profile pictures
+    match /users/{userId}/profile.jpg {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(userId) && 
         isImage() && 
         isUnderSizeLimit();
+      allow delete: if isOwner(userId);
     }
 
-    // User-specific directories
-    match /users/{userId}/{allPaths=**} {
-      allow read: if true;
-      allow write: if isAuthenticated() && 
-        request.auth.uid == userId && 
-        isUnderSizeLimit();
-    }
-
-    // Profile pictures
-    match /users/{userId}/profile.{extension} {
-      allow read: if true;
-      allow write: if isAuthenticated() && 
-        request.auth.uid == userId && 
+    // User photos
+    match /users/{userId}/photos/{photoId} {
+      allow read: if isAuthenticated();
+      allow write: if isOwner(userId) && 
         isImage() && 
         isUnderSizeLimit();
-      allow delete: if isAuthenticated() && 
-        request.auth.uid == userId;
+      allow delete: if isOwner(userId);
     }
 
     // Chat attachments
@@ -58,36 +45,16 @@ service firebase.storage {
       
       allow create: if isAuthenticated() && 
         isUnderSizeLimit() && 
-        (isImage() || isDocument()) &&
+        isImage() &&
         request.resource.metadata.senderId == request.auth.uid;
       
       allow delete: if isAuthenticated() && 
         resource.metadata.senderId == request.auth.uid;
     }
 
-    // Profile images
-    match /profiles/{userId}/profile.jpg {
-      allow read: if true;
-      allow write: if isAuthenticated() && 
-        request.auth.uid == userId && 
-        isImage() && 
-        isUnderSizeLimit();
-    }
-
-    match /users/{userId}/photos/{photoId} {
-      allow read: if true;
-      allow write: if request.auth != null && request.auth.uid == userId;
-    }
-
-    match /test-uploads/{filename} {
-      allow read: if true;
-      allow write: if request.auth != null;
-    }
-
-    // Default rule for other paths
+    // Default deny
     match /{allPaths=**} {
-      allow read: if true;
-      allow write: if isAuthenticated();
+      allow read, write: if false;
     }
   }
 } 
