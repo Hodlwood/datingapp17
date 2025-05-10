@@ -1,71 +1,64 @@
 import { NextResponse } from 'next/server';
-import { ValidationError } from '@/lib/utils/errorHandler';
+import { logger } from '@/lib/utils/logger';
 
-// Default size limits (in bytes)
-const DEFAULT_LIMITS = {
-  json: 1024 * 1024, // 1MB for JSON requests
-  text: 1024 * 1024, // 1MB for text requests
-  formData: 10 * 1024 * 1024, // 10MB for form data (file uploads)
-  raw: 1024 * 1024, // 1MB for raw requests
-};
+// Define size limits in bytes
+const SIZE_LIMITS = {
+  DEFAULT: 1024 * 1024, // 1MB default limit
+  CHAT: 1024 * 1024 * 2, // 2MB for chat messages
+  EMAIL: 1024 * 1024 * 5, // 5MB for email notifications
+  IMAGE: 1024 * 1024 * 10, // 10MB for image generation
+} as const;
 
-interface RequestSizeOptions {
-  limits?: Partial<typeof DEFAULT_LIMITS>;
+// Helper to get size limit based on route
+function getSizeLimit(path: string): number {
+  if (path.includes('/api/openai/chat') || path.includes('/api/anthropic/chat')) {
+    return SIZE_LIMITS.CHAT;
+  }
+  if (path.includes('/api/notifications/email')) {
+    return SIZE_LIMITS.EMAIL;
+  }
+  if (path.includes('/api/replicate/generate-image')) {
+    return SIZE_LIMITS.IMAGE;
+  }
+  return SIZE_LIMITS.DEFAULT;
 }
 
-export function requestSizeLimit(options: RequestSizeOptions = {}) {
-  const limits = { ...DEFAULT_LIMITS, ...options.limits };
-
-  return async function(request: Request) {
-    const contentType = request.headers.get('content-type') || '';
-    let sizeLimit: number;
-
-    // Determine size limit based on content type
-    if (contentType.includes('multipart/form-data')) {
-      sizeLimit = limits.formData;
-    } else if (contentType.includes('application/json')) {
-      sizeLimit = limits.json;
-    } else if (contentType.includes('text/')) {
-      sizeLimit = limits.text;
-    } else {
-      sizeLimit = limits.raw;
-    }
-
-    // Get content length from headers
+export async function requestSizeMiddleware(request: Request): Promise<Response | null> {
+  try {
     const contentLength = request.headers.get('content-length');
-    if (contentLength) {
-      const size = parseInt(contentLength, 10);
-      if (size > sizeLimit) {
-        throw new ValidationError(`Request body too large. Maximum size is ${sizeLimit / 1024 / 1024}MB`);
-      }
+    const path = new URL(request.url).pathname;
+
+    // Skip for GET requests or requests without content length
+    if (request.method === 'GET' || !contentLength) {
+      return null;
     }
 
-    // For requests without content-length header, we'll check the body
-    if (!contentLength && request.body) {
-      const reader = request.body.getReader();
-      let size = 0;
-      let done = false;
+    const sizeLimit = getSizeLimit(path);
+    const requestSize = parseInt(contentLength, 10);
 
-      while (!done) {
-        const { value, done: readerDone } = await reader.read();
-        done = readerDone;
-        if (value) {
-          size += value.length;
-          if (size > sizeLimit) {
-            throw new ValidationError(`Request body too large. Maximum size is ${sizeLimit / 1024 / 1024}MB`);
-          }
+    if (requestSize > sizeLimit) {
+      logger.warn('Request size limit exceeded', {
+        path,
+        requestSize,
+        sizeLimit,
+        method: request.method
+      }, request);
+
+      return new NextResponse(
+        JSON.stringify({
+          error: 'Request payload too large',
+          maxSize: `${sizeLimit / (1024 * 1024)}MB`
+        }),
+        {
+          status: 413,
+          headers: { 'Content-Type': 'application/json' }
         }
-      }
-
-      // Reset the request body for further processing
-      request = new Request(request.url, {
-        method: request.method,
-        headers: request.headers,
-        body: request.body,
-        signal: request.signal,
-      });
+      );
     }
 
-    return null; // Continue with the request if size is within limits
-  };
+    return null;
+  } catch (error) {
+    logger.error('Error in request size middleware', { error }, request);
+    return null; // Fail open to not block legitimate requests
+  }
 } 

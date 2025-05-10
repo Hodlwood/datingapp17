@@ -6,6 +6,7 @@ import { corsMiddleware } from '@/lib/middleware/cors';
 import { errorResponse, ValidationError, NotFoundError } from '@/lib/utils/errorHandler';
 import { sanitizeEmail, sanitizeText, sanitizeHTML } from '@/lib/utils/sanitize';
 import { logger } from '@/lib/utils/logger';
+import { requestSizeMiddleware } from '@/lib/middleware/requestSize';
 
 const resend = process.env.RESEND_API_KEY ? new Resend(process.env.RESEND_API_KEY) : null;
 
@@ -21,6 +22,12 @@ export async function POST(request: Request) {
     const rateLimitResult = await apiLimiter(request);
     if (rateLimitResult) {
       return rateLimitResult;
+    }
+
+    // Check request size
+    const sizeLimitResponse = await requestSizeMiddleware(request);
+    if (sizeLimitResponse) {
+      return sizeLimitResponse;
     }
 
     // Validate request body
@@ -48,7 +55,7 @@ export async function POST(request: Request) {
       ...sanitizedData
     });
 
-    logger.info('Email notification sent successfully', { messageId: data.id }, request);
+    logger.info('Email notification sent successfully', { data }, request);
     return NextResponse.json(data);
   } catch (error) {
     logger.error('Error sending email notification', { error }, request);
