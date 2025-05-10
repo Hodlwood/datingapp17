@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import Replicate from "replicate";
 import { apiLimiter } from '@/lib/middleware/rateLimit';
 import { validateRequest, imageGenerationSchema } from '@/lib/utils/validation';
+import { corsMiddleware } from '@/lib/middleware/cors';
 
 const replicate = new Replicate({
   auth: process.env.REPLICATE_API_TOKEN,
@@ -9,6 +10,12 @@ const replicate = new Replicate({
 
 export async function POST(request: Request) {
   try {
+    // Apply CORS middleware
+    const corsResponse = corsMiddleware(request);
+    if (corsResponse) {
+      return corsResponse;
+    }
+
     // Apply rate limiting
     const rateLimitResult = await apiLimiter(request);
     if (rateLimitResult) {
