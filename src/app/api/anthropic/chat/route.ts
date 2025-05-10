@@ -7,10 +7,11 @@ import { errorResponse, ValidationError, NotFoundError } from '@/lib/utils/error
 import { sanitizeText } from '@/lib/utils/sanitize';
 import { logger } from '@/lib/utils/logger';
 import { requestSizeMiddleware } from '@/lib/middleware/requestSize';
+import { timeoutMiddleware } from '@/lib/middleware/timeout';
 
 export const runtime = "edge";
 
-export async function POST(request: Request) {
+async function handleChatRequest(request: Request) {
   try {
     // Apply CORS middleware
     const corsResponse = corsMiddleware(request);
@@ -58,4 +59,8 @@ export async function POST(request: Request) {
     logger.error('Error processing Anthropic chat request', { error }, request);
     return errorResponse(error);
   }
+}
+
+export async function POST(request: Request) {
+  return timeoutMiddleware(request, handleChatRequest);
 }

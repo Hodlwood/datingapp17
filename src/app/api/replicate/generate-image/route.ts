@@ -7,10 +7,11 @@ import { errorResponse, ValidationError, NotFoundError } from '@/lib/utils/error
 import { sanitizeText } from '@/lib/utils/sanitize';
 import { logger } from '@/lib/utils/logger';
 import { requestSizeMiddleware } from '@/lib/middleware/requestSize';
+import { timeoutMiddleware } from '@/lib/middleware/timeout';
 
 const replicate = process.env.REPLICATE_API_TOKEN ? new Replicate({ auth: process.env.REPLICATE_API_TOKEN }) : null;
 
-export async function POST(request: Request) {
+async function handleImageRequest(request: Request) {
   try {
     // Apply CORS middleware
     const corsResponse = corsMiddleware(request);
@@ -65,4 +66,8 @@ export async function POST(request: Request) {
     logger.error('Error processing image generation request', { error }, request);
     return errorResponse(error);
   }
+}
+
+export async function POST(request: Request) {
+  return timeoutMiddleware(request, handleImageRequest);
 }

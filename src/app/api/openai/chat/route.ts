@@ -7,6 +7,7 @@ import { errorResponse, ValidationError, NotFoundError } from '@/lib/utils/error
 import { sanitizeText } from '@/lib/utils/sanitize';
 import { logger } from '@/lib/utils/logger';
 import { requestSizeMiddleware } from '@/lib/middleware/requestSize';
+import { timeoutMiddleware } from '@/lib/middleware/timeout';
 import { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
@@ -22,7 +23,7 @@ const systemPrompt = `You are an expert dating coach and relationship advisor sp
 
 Always maintain a professional, supportive tone and focus on practical, actionable advice. Respect user privacy and avoid making assumptions about their specific situation.`;
 
-export async function POST(request: Request) {
+async function handleChatRequest(request: Request) {
   try {
     // Apply CORS middleware
     const corsResponse = corsMiddleware(request);
@@ -81,4 +82,8 @@ export async function POST(request: Request) {
     logger.error('Error processing OpenAI chat request', { error }, request);
     return errorResponse(error);
   }
+}
+
+export async function POST(request: Request) {
+  return timeoutMiddleware(request, handleChatRequest);
 }
