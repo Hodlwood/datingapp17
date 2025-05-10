@@ -6,6 +6,7 @@ import { corsMiddleware } from '@/lib/middleware/cors';
 import { errorResponse, ValidationError, NotFoundError } from '@/lib/utils/errorHandler';
 import { sanitizeText } from '@/lib/utils/sanitize';
 import { logger } from '@/lib/utils/logger';
+import { requestSizeMiddleware } from '@/lib/middleware/requestSize';
 import { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
 const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
@@ -33,6 +34,12 @@ export async function POST(request: Request) {
     const rateLimitResult = await apiLimiter(request);
     if (rateLimitResult) {
       return rateLimitResult;
+    }
+
+    // Check request size
+    const sizeLimitResponse = await requestSizeMiddleware(request);
+    if (sizeLimitResponse) {
+      return sizeLimitResponse;
     }
 
     // Validate request body
