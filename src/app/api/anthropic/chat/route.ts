@@ -3,44 +3,52 @@ import { convertToCoreMessages, streamText } from "ai";
 import { apiLimiter } from '@/lib/middleware/rateLimit';
 import { validateRequest, anthropicMessageSchema } from '@/lib/utils/validation';
 import { corsMiddleware } from '@/lib/middleware/cors';
+import { errorResponse, ValidationError, NotFoundError } from '@/lib/utils/errorHandler';
+import { sanitizeText } from '@/lib/utils/sanitize';
+import { logger } from '@/lib/utils/logger';
 
 export const runtime = "edge";
 
-export async function POST(req: Request) {
+export async function POST(request: Request) {
   try {
     // Apply CORS middleware
-    const corsResponse = corsMiddleware(req);
+    const corsResponse = corsMiddleware(request);
     if (corsResponse) {
       return corsResponse;
     }
 
     // Apply rate limiting
-    const rateLimitResult = await apiLimiter(req);
+    const rateLimitResult = await apiLimiter(request);
     if (rateLimitResult) {
       return rateLimitResult;
     }
 
     // Validate request body
-    const validationResult = await validateRequest(req, anthropicMessageSchema);
+    const validationResult = await validateRequest(request, anthropicMessageSchema);
     if (!validationResult.success) {
-      return new Response(
-        JSON.stringify({ error: validationResult.error }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      );
+      throw new ValidationError(validationResult.error);
     }
+
+    // Sanitize the input data
+    const { messages } = validationResult.data;
+    const sanitizedMessages = messages.map(msg => ({
+      ...msg,
+      content: sanitizeText(msg.content)
+    }));
+
+    logger.info('Processing Anthropic chat request', { messageCount: sanitizedMessages.length }, request);
 
     const result = await streamText({
       model: anthropic("claude-3-5-sonnet-20240620"),
-      messages: convertToCoreMessages(validationResult.data.messages),
+      messages: convertToCoreMessages(sanitizedMessages),
       system: "You are a helpful AI assistant",
     });
 
+    logger.info('Anthropic chat response received', { model: 'claude-3-5-sonnet-20240620' }, request);
+
     return result.toDataStreamResponse();
   } catch (error) {
-    console.error('Error in Anthropic chat route:', error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Failed to process chat request' }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
-    );
+    logger.error('Error processing Anthropic chat request', { error }, request);
+    return errorResponse(error);
   }
 }

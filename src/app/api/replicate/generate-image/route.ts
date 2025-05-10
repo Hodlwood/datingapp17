@@ -3,10 +3,11 @@ import Replicate from "replicate";
 import { apiLimiter } from '@/lib/middleware/rateLimit';
 import { validateRequest, imageGenerationSchema } from '@/lib/utils/validation';
 import { corsMiddleware } from '@/lib/middleware/cors';
+import { errorResponse, ValidationError, NotFoundError } from '@/lib/utils/errorHandler';
+import { sanitizeText } from '@/lib/utils/sanitize';
+import { logger } from '@/lib/utils/logger';
 
-const replicate = new Replicate({
-  auth: process.env.REPLICATE_API_TOKEN,
-});
+const replicate = process.env.REPLICATE_API_TOKEN ? new Replicate({ auth: process.env.REPLICATE_API_TOKEN }) : null;
 
 export async function POST(request: Request) {
   try {
@@ -25,35 +26,36 @@ export async function POST(request: Request) {
     // Validate request body
     const validationResult = await validateRequest(request, imageGenerationSchema);
     if (!validationResult.success) {
-      return NextResponse.json(
-        { error: validationResult.error },
-        { status: 400 }
-      );
+      throw new ValidationError(validationResult.error);
     }
 
-    if (!process.env.REPLICATE_API_TOKEN) {
-      throw new Error(
-        "The REPLICATE_API_TOKEN environment variable is not set. See README.md for instructions on how to set it."
-      );
+    if (!replicate) {
+      throw new NotFoundError('Replicate service is not configured');
     }
+
+    // Sanitize the input data
+    const { prompt } = validationResult.data;
+    const sanitizedPrompt = sanitizeText(prompt);
+
+    logger.info('Processing image generation request', { prompt: sanitizedPrompt }, request);
 
     const output = await replicate.run(
-      "stability-ai/stable-diffusion:db21e45d3f7023abc2a46ee38a23973f6dce16bb082a930b0c49861f96d1e5bf",
+      "stability-ai/sdxl:39ed52f2a78e934b3ba6e2a89f5b1c712de7dfea535525255b1aa35c5565e08b",
       {
         input: {
-          prompt: validationResult.data.prompt,
-          image_dimensions: "512x512",
+          prompt: sanitizedPrompt,
           num_outputs: 1,
-          num_inference_steps: 50,
-          guidance_scale: 7.5,
-          scheduler: "DPMSolverMultistep",
-        },
+          scheduler: "K_EULER",
+          num_inference_steps: 50
+        }
       }
     );
 
-    return NextResponse.json({ output }, { status: 200 });
+    logger.info('Image generation completed', { output }, request);
+
+    return NextResponse.json({ output });
   } catch (error) {
-    console.error("Error from Replicate API:", error);
-    return NextResponse.json({ error: (error as Error).message }, { status: 500 });
+    logger.error('Error processing image generation request', { error }, request);
+    return errorResponse(error);
   }
 }

@@ -1,12 +1,19 @@
-import { openai } from '@/lib/openai';
+import { NextResponse } from 'next/server';
+import OpenAI from 'openai';
 import { apiLimiter } from '@/lib/middleware/rateLimit';
 import { validateRequest, openaiMessageSchema } from '@/lib/utils/validation';
 import { corsMiddleware } from '@/lib/middleware/cors';
+import { errorResponse, ValidationError, NotFoundError } from '@/lib/utils/errorHandler';
+import { sanitizeText } from '@/lib/utils/sanitize';
+import { logger } from '@/lib/utils/logger';
+import { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
+
+const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
 
 const systemPrompt = `You are an expert dating coach and relationship advisor specializing in helping entrepreneurs find meaningful relationships. Your role is to:
 
-1. Provide personalized advice about dating, relationships, and finding compatible partners
-2. Help users understand their dating preferences and deal-breakers
+1. Provide personalized dating advice based on user's situation
+2. Help users understand and articulate their dating preferences
 3. Offer guidance on creating an attractive dating profile
 4. Share tips for maintaining work-life balance while dating
 5. Give advice on communication and building healthy relationships
@@ -14,61 +21,57 @@ const systemPrompt = `You are an expert dating coach and relationship advisor sp
 
 Always maintain a professional, supportive tone and focus on practical, actionable advice. Respect user privacy and avoid making assumptions about their specific situation.`;
 
-export async function POST(req: Request) {
+export async function POST(request: Request) {
   try {
     // Apply CORS middleware
-    const corsResponse = corsMiddleware(req);
+    const corsResponse = corsMiddleware(request);
     if (corsResponse) {
       return corsResponse;
     }
 
     // Apply rate limiting
-    const rateLimitResult = await apiLimiter(req);
+    const rateLimitResult = await apiLimiter(request);
     if (rateLimitResult) {
       return rateLimitResult;
     }
 
     // Validate request body
-    const validationResult = await validateRequest(req, openaiMessageSchema);
+    const validationResult = await validateRequest(request, openaiMessageSchema);
     if (!validationResult.success) {
-      return new Response(
-        JSON.stringify({ error: validationResult.error }),
-        { status: 400, headers: { 'Content-Type': 'application/json' } }
-      );
+      throw new ValidationError(validationResult.error);
+    }
+
+    if (!openai) {
+      throw new NotFoundError('OpenAI service is not configured');
     }
 
     // Add system prompt to the beginning of the conversation
-    const messagesWithSystem = [
+    const messagesWithSystem: ChatCompletionMessageParam[] = [
       { role: 'system', content: systemPrompt },
       ...validationResult.data.messages
     ];
 
-    console.log('Sending request to OpenAI with messages:', messagesWithSystem);
+    // Sanitize the input data
+    const sanitizedMessages = messagesWithSystem.map(msg => ({
+      ...msg,
+      content: sanitizeText(msg.content as string)
+    }));
+
+    logger.info('Processing OpenAI chat request', { messageCount: sanitizedMessages.length }, request);
 
     const response = await openai.chat.completions.create({
       model: 'gpt-4',
-      messages: messagesWithSystem,
+      messages: sanitizedMessages,
       temperature: 0.7,
-      stream: false,
+      max_tokens: 1000,
+      stream: true
     });
 
-    if (!response.choices || !response.choices[0]?.message?.content) {
-      console.error('Invalid response from OpenAI:', response);
-      return new Response(
-        JSON.stringify({ error: 'Invalid response from OpenAI' }),
-        { status: 500, headers: { 'Content-Type': 'application/json' } }
-      );
-    }
+    logger.info('OpenAI chat response received', { model: 'gpt-4' }, request);
 
-    return new Response(
-      JSON.stringify({ content: response.choices[0].message.content }),
-      { status: 200, headers: { 'Content-Type': 'application/json' } }
-    );
+    return new Response(response.toReadableStream());
   } catch (error) {
-    console.error('Error in OpenAI chat route:', error);
-    return new Response(
-      JSON.stringify({ error: error instanceof Error ? error.message : 'Failed to process chat request' }),
-      { status: 500, headers: { 'Content-Type': 'application/json' } }
-    );
+    logger.error('Error processing OpenAI chat request', { error }, request);
+    return errorResponse(error);
   }
 }

@@ -46,7 +46,9 @@ const baseMessageSchema = z.object({
 
 // OpenAI message schema
 export const openaiMessageSchema = z.object({
-  messages: z.array(baseMessageSchema.extend({
+  messages: z.array(z.object({
+    role: z.enum(['user', 'assistant', 'system']),
+    content: z.string().min(1, 'Message content cannot be empty'),
     name: z.string().optional(),
     function_call: z.any().optional()
   })) as z.ZodType<ChatCompletionMessageParam[]>
