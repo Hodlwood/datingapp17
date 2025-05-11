@@ -1,96 +1,46 @@
-import { NextRequest, NextResponse } from 'next/server';
-import OpenAI from 'openai';
-import { apiLimiter } from '@/lib/middleware/rateLimit';
-import { validateRequest, openaiMessageSchema } from '@/lib/utils/validation';
-import { corsMiddleware } from '@/lib/middleware/cors';
-import { errorResponse, ValidationError, NotFoundError } from '@/lib/utils/errorHandler';
-import { sanitizeText } from '@/lib/utils/sanitize';
+import { OpenAIStream, StreamingTextResponse } from 'ai';
+import { Configuration, OpenAIApi } from 'openai-edge';
 import { logger } from '@/lib/utils/logger';
-import { requestSizeMiddleware } from '@/lib/middleware/requestSize';
-import { timeoutMiddleware } from '@/lib/middleware/timeout';
-import { securityHeadersMiddleware } from '@/lib/middleware/securityHeaders';
-import { ChatCompletionMessageParam } from 'openai/resources/chat/completions';
 
-const openai = process.env.OPENAI_API_KEY ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY }) : null;
+// Create an OpenAI API client (that's edge friendly!)
+const config = new Configuration({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+const openai = new OpenAIApi(config);
 
-const systemPrompt = `You are an expert dating coach and relationship advisor specializing in helping entrepreneurs find meaningful relationships. Your role is to:
+// IMPORTANT! Set the runtime to edge
+export const runtime = 'edge';
 
-1. Provide personalized dating advice based on user's situation
-2. Help users understand and articulate their dating preferences
-3. Offer guidance on creating an attractive dating profile
-4. Share tips for maintaining work-life balance while dating
-5. Give advice on communication and building healthy relationships
-6. Help users navigate common dating challenges
-
-Always maintain a professional, supportive tone and focus on practical, actionable advice. Respect user privacy and avoid making assumptions about their specific situation.`;
-
-async function handleChatRequest(request: NextRequest) {
+export async function POST(req: Request) {
   try {
-    // Apply security headers
-    const securityResponse = await securityHeadersMiddleware(request);
-    if (securityResponse) {
-      return securityResponse;
-    }
+    const { messages } = await req.json();
 
-    // Apply CORS middleware
-    const corsResponse = await corsMiddleware(request);
-    if (corsResponse) {
-      return corsResponse;
-    }
-
-    // Apply rate limiting
-    const rateLimitResult = await apiLimiter(request);
-    if (rateLimitResult) {
-      return rateLimitResult;
-    }
-
-    // Check request size
-    const sizeLimitResponse = await requestSizeMiddleware(request);
-    if (sizeLimitResponse) {
-      return sizeLimitResponse;
-    }
-
-    // Validate request body
-    const validationResult = await validateRequest(request, openaiMessageSchema);
-    if (!validationResult.success) {
-      throw new ValidationError(validationResult.error);
-    }
-
-    if (!openai) {
-      throw new NotFoundError('OpenAI service is not configured');
-    }
-
-    // Add system prompt to the beginning of the conversation
-    const messagesWithSystem: ChatCompletionMessageParam[] = [
-      { role: 'system', content: systemPrompt },
-      ...validationResult.data.messages
-    ];
-
-    // Sanitize the input data
-    const sanitizedMessages = messagesWithSystem.map(msg => ({
-      ...msg,
-      content: sanitizeText(msg.content as string)
-    }));
-
-    logger.info('Processing OpenAI chat request', { messageCount: sanitizedMessages.length }, request);
-
-    const response = await openai.chat.completions.create({
-      model: 'gpt-4',
-      messages: sanitizedMessages,
-      temperature: 0.7,
-      max_tokens: 1000,
-      stream: true
+    // Log the request
+    logger.info('OpenAI chat request received', { 
+      messageCount: messages.length,
+      lastMessage: messages[messages.length - 1]?.content?.substring(0, 100) + '...'
     });
 
-    logger.info('OpenAI chat response received', { model: 'gpt-4' }, request);
+    // Ask OpenAI for a streaming chat completion
+    const response = await openai.createChatCompletion({
+      model: 'gpt-3.5-turbo',
+      stream: true,
+      messages: messages.map((message: any) => ({
+        content: message.content,
+        role: message.role,
+      })),
+    });
 
-    return new Response(response.toReadableStream());
+    // Convert the response into a friendly text-stream
+    const stream = OpenAIStream(response);
+
+    // Return a StreamingTextResponse, which can be consumed by the client
+    return new StreamingTextResponse(stream);
   } catch (error) {
-    logger.error('Error processing OpenAI chat request', { error }, request);
-    return errorResponse(error);
+    logger.error('OpenAI chat error', { error });
+    return new Response(
+      JSON.stringify({ error: 'Failed to process chat request' }),
+      { status: 500, headers: { 'Content-Type': 'application/json' } }
+    );
   }
-}
-
-export async function POST(request: NextRequest) {
-  return handleChatRequest(request);
 }
