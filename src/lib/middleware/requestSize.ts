@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/utils/logger';
 
 // Define size limits in bytes
@@ -23,7 +23,7 @@ function getSizeLimit(path: string): number {
   return SIZE_LIMITS.DEFAULT;
 }
 
-export async function requestSizeMiddleware(request: Request): Promise<Response | null> {
+export async function requestSizeMiddleware(request: NextRequest): Promise<NextResponse | null> {
   try {
     const contentLength = request.headers.get('content-length');
     const path = new URL(request.url).pathname;
@@ -44,11 +44,11 @@ export async function requestSizeMiddleware(request: Request): Promise<Response 
         method: request.method
       }, request);
 
-      return new NextResponse(
-        JSON.stringify({
+      return NextResponse.json(
+        {
           error: 'Request payload too large',
           maxSize: `${sizeLimit / (1024 * 1024)}MB`
-        }),
+        },
         {
           status: 413,
           headers: { 'Content-Type': 'application/json' }

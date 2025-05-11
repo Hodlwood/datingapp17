@@ -91,6 +91,6 @@ async function handleChatRequest(request: NextRequest) {
   }
 }
 
-export async function POST(request: Request) {
-  return timeoutMiddleware(request, handleChatRequest);
+export async function POST(request: NextRequest) {
+  return handleChatRequest(request);
 }

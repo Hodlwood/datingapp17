@@ -35,9 +35,13 @@ const securityHeaders = {
   `.replace(/\s+/g, ' ').trim(),
 };
 
-export async function securityHeadersMiddleware(request: NextRequest): Promise<NextResponse | null> {
+export async function securityHeadersMiddleware(request: NextRequest): Promise<Response | null> {
   try {
-    const response = NextResponse.next();
+    // Create a new Response with the request body
+    const response = new Response(request.body, {
+      status: 200,
+      headers: new Headers()
+    });
     
     // Add security headers to the response
     Object.entries(securityHeaders).forEach(([key, value]) => {

@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { logger } from '@/lib/utils/logger';
 
 // Define timeout limits in milliseconds
@@ -23,7 +23,10 @@ function getTimeoutLimit(path: string): number {
   return TIMEOUT_LIMITS.DEFAULT;
 }
 
-export async function timeoutMiddleware(request: Request, handler: (request: Request) => Promise<Response>): Promise<Response> {
+export async function timeoutMiddleware(
+  request: NextRequest,
+  handler: (request: NextRequest) => Promise<NextResponse>
+): Promise<NextResponse> {
   const path = new URL(request.url).pathname;
   const timeoutLimit = getTimeoutLimit(path);
 
@@ -50,11 +53,11 @@ export async function timeoutMiddleware(request: Request, handler: (request: Req
         method: request.method
       }, request);
 
-      return new NextResponse(
-        JSON.stringify({
+      return NextResponse.json(
+        {
           error: 'Request timed out',
           message: `The request took too long to process. Please try again.`
-        }),
+        },
         {
           status: 408,
           headers: { 'Content-Type': 'application/json' }

@@ -14,6 +14,8 @@ import {
 import { auth } from '../firebase/firebase';
 import { getDoc, doc, setDoc } from 'firebase/firestore';
 import { db } from '../firebase/firebase';
+import { handleAuthRateLimit, resetAuthRateLimit } from '@/lib/utils/authRateLimit';
+import { logger } from '@/lib/utils/logger';
 
 interface AuthContextType {
   user: User | null;
@@ -121,15 +123,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
-  const signIn = async (email: string, password: string) => {
+  const signIn = async (email: string, password: string): Promise<User> => {
     try {
-      setError(null);
+      const { shouldRetry, backoffMs } = handleAuthRateLimit(email);
+      
+      if (!shouldRetry) {
+        throw new Error(`Too many login attempts. Please try again in ${Math.ceil(backoffMs / 1000)} seconds.`);
+      }
+
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
+      resetAuthRateLimit(email);
       return userCredential.user;
-    } catch (err) {
-      console.error('Sign in error:', err);
-      setError(err instanceof Error ? err.message : 'Failed to sign in');
-      throw err;
+    } catch (error: any) {
+      logger.error('Sign in error', { error });
+      
+      if (error.code === 'auth/too-many-requests') {
+        const { backoffMs } = handleAuthRateLimit(email);
+        throw new Error(`Too many login attempts. Please try again in ${Math.ceil(backoffMs / 1000)} seconds.`);
+      }
+      
+      setError(error instanceof Error ? error.message : 'An error occurred');
+      throw error;
     }
   };
 

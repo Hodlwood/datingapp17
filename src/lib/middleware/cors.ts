@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextRequest } from 'next/server';
 
 // Define allowed origins - we'll keep it permissive for development
 const allowedOrigins = [
@@ -20,13 +20,13 @@ const allowedHeaders = [
   'Origin'
 ];
 
-export function corsMiddleware(request: Request) {
+export async function corsMiddleware(request: NextRequest): Promise<Response | null> {
   // Get the origin from the request headers
   const origin = request.headers.get('origin') || '';
 
   // Handle preflight requests
   if (request.method === 'OPTIONS') {
-    return new NextResponse(null, {
+    return new Response(null, {
       status: 204,
       headers: {
         'Access-Control-Allow-Origin': origin,
@@ -37,8 +37,11 @@ export function corsMiddleware(request: Request) {
     });
   }
 
-  // For actual requests, add CORS headers
-  const response = NextResponse.next();
+  // For actual requests, create a new response
+  const response = new Response(request.body, {
+    status: 200,
+    headers: new Headers()
+  });
   
   // Only add CORS headers if the origin is allowed
   if (allowedOrigins.includes(origin)) {

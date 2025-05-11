@@ -1,18 +1,159 @@
-import { NextResponse } from 'next/server';
+import { NextRequest, NextResponse } from 'next/server';
 import { headers } from 'next/headers';
+import { Redis } from '@upstash/redis';
+import { Ratelimit } from '@upstash/ratelimit';
+import { logger } from '@/lib/utils/logger';
 
-// Rate limit store (in-memory for now, consider using Redis for production)
-const rateLimitStore = new Map<string, { count: number; resetTime: number }>();
+// Initialize Redis client with error handling
+let redis: Redis;
+try {
+  if (!process.env.UPSTASH_REDIS_REST_URL || !process.env.UPSTASH_REDIS_REST_TOKEN) {
+    logger.warn('Redis credentials not found, using in-memory rate limiting');
+    redis = null as any;
+  } else {
+    redis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN,
+    });
+  }
+} catch (error) {
+  logger.error('Failed to initialize Redis client', { error });
+  redis = null as any;
+}
+
+// Create different rate limiters for different endpoints
+const limiters = {
+  // General API rate limiter
+  api: new Ratelimit({
+    redis,
+    limiter: Ratelimit.slidingWindow(100, '15 m'), // 100 requests per 15 minutes
+    analytics: true,
+    prefix: 'ratelimit:api',
+  }),
+
+  // Authentication rate limiter (stricter)
+  auth: new Ratelimit({
+    redis,
+    limiter: Ratelimit.slidingWindow(5, '1 h'), // 5 requests per hour
+    analytics: true,
+    prefix: 'ratelimit:auth',
+  }),
+
+  // OpenAI API rate limiter
+  openai: new Ratelimit({
+    redis,
+    limiter: Ratelimit.slidingWindow(10, '1 m'), // 10 requests per minute
+    analytics: true,
+    prefix: 'ratelimit:openai',
+  }),
+
+  // Profile updates rate limiter
+  profile: new Ratelimit({
+    redis,
+    limiter: Ratelimit.slidingWindow(20, '1 h'), // 20 requests per hour
+    analytics: true,
+    prefix: 'ratelimit:profile',
+  }),
+};
+
+// Helper function to get the appropriate limiter based on the path
+function getLimiter(path: string) {
+  if (path.startsWith('/api/auth')) return limiters.auth;
+  if (path.startsWith('/api/openai')) return limiters.openai;
+  if (path.startsWith('/api/profile')) return limiters.profile;
+  return limiters.api;
+}
+
+// Helper function to safely parse URL
+function parseUrl(url: string): string {
+  try {
+    // If it's already a full URL, parse it
+    if (url.startsWith('http')) {
+      return new URL(url).pathname;
+    }
+    
+    // If it's a relative path, ensure it starts with /
+    return url.startsWith('/') ? url : `/${url}`;
+  } catch (error) {
+    logger.warn('Failed to parse URL', { url, error });
+    // Return a safe default path
+    return '/';
+  }
+}
+
+export async function rateLimitMiddleware(request: Request) {
+  try {
+    const ip = request.headers.get('x-forwarded-for') || 'anonymous';
+    
+    // Safely parse the URL
+    const path = parseUrl(request.url);
+    
+    // Skip rate limiting for static files and images
+    if (
+      path.startsWith('/_next') ||
+      path.startsWith('/static') ||
+      path.startsWith('/images') ||
+      path.includes('.')
+    ) {
+      return new Response(null, { status: 200 });
+    }
+
+    const limiter = getLimiter(path);
+    const { success, limit, reset, remaining } = await limiter.limit(ip);
+
+    // Add rate limit headers
+    const headers = new Headers();
+    headers.set('X-RateLimit-Limit', limit.toString());
+    headers.set('X-RateLimit-Remaining', remaining.toString());
+    headers.set('X-RateLimit-Reset', reset.toString());
+
+    if (!success) {
+      logger.warn('Rate limit exceeded', {
+        ip,
+        path,
+        limit,
+        remaining,
+        reset,
+      });
+
+      return new Response(
+        JSON.stringify({
+          error: 'Too many requests',
+          message: 'Please try again later',
+          retryAfter: Math.ceil((reset - Date.now()) / 1000),
+        }),
+        {
+          status: 429,
+          headers: {
+            'Content-Type': 'application/json',
+            ...Object.fromEntries(headers),
+            'Retry-After': Math.ceil((reset - Date.now()) / 1000).toString(),
+          },
+        }
+      );
+    }
+
+    // Add rate limit headers to the response
+    return new Response(null, {
+      status: 200,
+      headers,
+    });
+  } catch (error) {
+    logger.error('Rate limit middleware error', { error });
+    // If rate limiting fails, allow the request but log the error
+    return new Response(null, { status: 200 });
+  }
+}
 
 // Helper function to get client IP
-function getClientIP(request: Request): string {
+function getClientIP(request: NextRequest): string {
   const headersList = headers();
   const forwardedFor = headersList.get('x-forwarded-for');
   return forwardedFor ? forwardedFor.split(',')[0] : 'unknown';
 }
 
 // General API rate limiter
-export async function apiLimiter(request: Request) {
+export async function apiLimiter(request: NextRequest): Promise<NextResponse | null> {
   const ip = getClientIP(request);
   const now = Date.now();
   const windowMs = 15 * 60 * 1000; // 15 minutes
@@ -43,7 +184,7 @@ export async function apiLimiter(request: Request) {
 }
 
 // Stricter limiter for authentication routes
-export async function authLimiter(request: Request) {
+export async function authLimiter(request: NextRequest): Promise<NextResponse | null> {
   const ip = getClientIP(request);
   const now = Date.now();
   const windowMs = 60 * 60 * 1000; // 1 hour
@@ -70,7 +211,7 @@ export async function authLimiter(request: Request) {
 }
 
 // Stricter limiter for message sending
-export async function messageLimiter(request: Request) {
+export async function messageLimiter(request: NextRequest): Promise<NextResponse | null> {
   const ip = getClientIP(request);
   const now = Date.now();
   const windowMs = 60 * 1000; // 1 minute
@@ -97,7 +238,7 @@ export async function messageLimiter(request: Request) {
 }
 
 // Stricter limiter for profile updates
-export async function profileUpdateLimiter(request: Request) {
+export async function profileUpdateLimiter(request: NextRequest): Promise<NextResponse | null> {
   const ip = getClientIP(request);
   const now = Date.now();
   const windowMs = 60 * 60 * 1000; // 1 hour
