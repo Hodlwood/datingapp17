@@ -1,8 +1,68 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { headers } from 'next/headers';
+import { Redis } from '@upstash/redis';
+import { Ratelimit } from '@upstash/ratelimit';
 import { logger } from '@/lib/utils/logger';
 
-// In-memory store for rate limiting
+// Initialize Redis client with error handling
+let redis: Redis | null = null;
+let limiters: {
+  api: Ratelimit;
+  auth: Ratelimit;
+  openai: Ratelimit;
+  profile: Ratelimit;
+} | null = null;
+
+try {
+  if (process.env.UPSTASH_REDIS_REST_URL && process.env.UPSTASH_REDIS_REST_TOKEN) {
+    redis = new Redis({
+      url: process.env.UPSTASH_REDIS_REST_URL,
+      token: process.env.UPSTASH_REDIS_REST_TOKEN,
+    });
+
+    // Create different rate limiters for different endpoints
+    limiters = {
+      // General API rate limiter
+      api: new Ratelimit({
+        redis,
+        limiter: Ratelimit.slidingWindow(100, '15 m'), // 100 requests per 15 minutes
+        analytics: true,
+        prefix: 'ratelimit:api',
+      }),
+
+      // Authentication rate limiter (stricter)
+      auth: new Ratelimit({
+        redis,
+        limiter: Ratelimit.slidingWindow(5, '1 h'), // 5 requests per hour
+        analytics: true,
+        prefix: 'ratelimit:auth',
+      }),
+
+      // OpenAI API rate limiter
+      openai: new Ratelimit({
+        redis,
+        limiter: Ratelimit.slidingWindow(10, '1 m'), // 10 requests per minute
+        analytics: true,
+        prefix: 'ratelimit:openai',
+      }),
+
+      // Profile updates rate limiter
+      profile: new Ratelimit({
+        redis,
+        limiter: Ratelimit.slidingWindow(20, '1 h'), // 20 requests per hour
+        analytics: true,
+        prefix: 'ratelimit:profile',
+      }),
+    };
+    logger.info('Redis rate limiting initialized successfully');
+  } else {
+    logger.warn('Redis credentials not found, using in-memory rate limiting');
+  }
+} catch (error) {
+  logger.error('Failed to initialize Redis client', { error });
+}
+
+// In-memory store for rate limiting (fallback)
 const rateLimitStore = new Map<string, { count: number; resetTime: number }>();
 
 // Rate limit configurations
@@ -24,16 +84,21 @@ function getRateLimit(path: string) {
 // Helper function to safely parse URL
 function parseUrl(url: string): string {
   try {
-    // If it's already a full URL, parse it
-    if (url.startsWith('http')) {
-      return new URL(url).pathname;
+    // Handle relative paths (most common case)
+    if (url.startsWith('/')) {
+      return url;
     }
     
-    // If it's a relative path, ensure it starts with /
-    return url.startsWith('/') ? url : `/${url}`;
+    // Handle full URLs
+    if (url.startsWith('http')) {
+      const parsedUrl = new URL(url);
+      return parsedUrl.pathname;
+    }
+    
+    // Handle other cases by ensuring path starts with /
+    return `/${url}`;
   } catch (error) {
-    logger.warn('Failed to parse URL', { url, error });
-    // Return a safe default path
+    logger.warn('Failed to parse URL, using default path', { url, error });
     return '/';
   }
 }
@@ -55,6 +120,54 @@ export async function rateLimitMiddleware(request: Request) {
       return new Response(null, { status: 200 });
     }
 
+    // Use Redis-based rate limiting if available
+    if (limiters) {
+      const limiter = path.startsWith('/api/auth') ? limiters.auth :
+                     path.startsWith('/api/openai') ? limiters.openai :
+                     path.startsWith('/api/profile') ? limiters.profile :
+                     limiters.api;
+
+      const { success, limit, reset, remaining } = await limiter.limit(ip);
+
+      // Add rate limit headers
+      const headers = new Headers();
+      headers.set('X-RateLimit-Limit', limit.toString());
+      headers.set('X-RateLimit-Remaining', remaining.toString());
+      headers.set('X-RateLimit-Reset', reset.toString());
+
+      if (!success) {
+        logger.warn('Rate limit exceeded', {
+          ip,
+          path,
+          limit,
+          remaining,
+          reset,
+        });
+
+        return new Response(
+          JSON.stringify({
+            error: 'Too many requests',
+            message: 'Please try again later',
+            retryAfter: Math.ceil((reset - Date.now()) / 1000),
+          }),
+          {
+            status: 429,
+            headers: {
+              'Content-Type': 'application/json',
+              ...Object.fromEntries(headers),
+              'Retry-After': Math.ceil((reset - Date.now()) / 1000).toString(),
+            },
+          }
+        );
+      }
+
+      return new Response(null, {
+        status: 200,
+        headers,
+      });
+    }
+
+    // Fallback to in-memory rate limiting
     const { max, windowMs } = getRateLimit(path);
     const now = Date.now();
     const key = `${ip}:${path}`;
@@ -69,7 +182,7 @@ export async function rateLimitMiddleware(request: Request) {
         rateLimitStore.set(key, { count: 1, resetTime });
       } else if (record.count >= max) {
         // Rate limit exceeded
-        logger.warn('Rate limit exceeded', {
+        logger.warn('Rate limit exceeded (in-memory)', {
           ip,
           path,
           limit: max,
